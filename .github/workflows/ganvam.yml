@@ -1,0 +1,85 @@
+name: Pipeline Ganvam
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"   # cada lunes a las 06:00 UTC
+  workflow_dispatch:      # ejecución manual opcional
+
+permissions:
+  contents: write   # necesario para commitear ganvam_state.json
+
+jobs:
+  sonda:
+    runs-on: ubuntu-latest
+    outputs:
+      nuevo_periodo: ${{ steps.detect.outputs.nuevo_periodo }}
+      periodo: ${{ steps.detect.outputs.periodo }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install requests
+
+      - name: Detectar nuevo periodo
+        id: detect
+        working-directory: "precio venta"
+        env:
+          GANVAM_TOKEN: ${{ secrets.GANVAM_TOKEN }}
+        run: python sonda.py
+
+      - name: Commit estado actualizado
+        if: steps.detect.outputs.nuevo_periodo == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "precio venta/ganvam_state.json"
+          git commit -m "chore(ganvam): update last_period to ${{ steps.detect.outputs.periodo }}"
+          git push
+
+  pipeline:
+    needs: sonda
+    if: needs.sonda.outputs.nuevo_periodo == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Fase 1
+        working-directory: "precio venta"
+        env:
+          GANVAM_TOKEN: ${{ secrets.GANVAM_TOKEN }}
+          GANVAM_PERIODO: ${{ needs.sonda.outputs.periodo }}
+        run: python fase1.py
+
+      - name: Run Fase 2
+        working-directory: "precio venta"
+        env:
+          GANVAM_TOKEN: ${{ secrets.GANVAM_TOKEN }}
+        run: python fase2.py
+
+      - name: Upload artefacto Parquet
+        uses: actions/upload-artifact@v4
+        with:
+          name: ganvam_parquet
+          path: "precio venta/ganvam_fase2_normalizado.parquet"
+
+      - name: Subir Parquet a Google Drive
+        working-directory: "precio venta"
+        env:
+          GANVAM_PARQUET_FOLDER_ID: ${{ secrets.GANVAM_PARQUET_FOLDER_ID }}
+          GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64 }}
+        run: python upload_ganvam_parquet.py

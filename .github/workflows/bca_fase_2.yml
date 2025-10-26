@@ -1,0 +1,260 @@
+name: BCA Fase 2
+
+on:
+  schedule:
+    - cron: '0 23 * * *'  # Diario 23:00 UTC
+  workflow_dispatch:
+    inputs:
+      date_yyyymmdd:
+        description: "Forzar fecha (YYYYMMDD) para reintento manual de Fase 2"
+        required: false
+        default: ""
+
+jobs:
+  bca-fase2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      BCA_USER: ${{ secrets.BCA_USER }}
+      BCA_PASS: ${{ secrets.BCA_PASS }}
+      GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+      GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64 }}
+      DEST_COUNTRY: Spain   # <-- Transporte
+
+    steps:
+      - name: "Checkout repo"
+        uses: actions/checkout@v4
+
+      - name: "Setup Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: "Install dependencies"
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m playwright install chromium
+
+
+      # --- Descarga de Fase 1 (respeta fecha forzada si se indica) ---
+      - name: "Download Phase 1 Excel from Google Drive"
+        run: |
+          if [ -n "${{ inputs.date_yyyymmdd }}" ]; then
+            echo "Forzando fecha: ${{ inputs.date_yyyymmdd }}"
+            TODAY="${{ inputs.date_yyyymmdd }}" python download_from_drive.py
+          else
+            HOY=$(date +%Y%m%d)
+            TODAY="$HOY" python download_from_drive.py
+          fi
+
+      # --- Selección de Excel base (fecha forzada > hoy > último disponible) ---
+      - name: "Prepare variables: pick forced date, today's Excel or latest base"
+        id: preparar
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${{ inputs.date_yyyymmdd }}" ]; then
+            FECHA="${{ inputs.date_yyyymmdd }}"
+          else
+            FECHA="$(date +%Y%m%d)"
+          fi
+
+          CANDIDATO="fichas_vehiculos_${FECHA}.xlsx"
+
+          if [ -f "$CANDIDATO" ]; then
+            EXCEL_IN="$CANDIDATO"
+          else
+            # Último base disponible (no *_completo.xlsx)
+            LATEST=$(ls -1 fichas_vehiculos_*.xlsx 2>/dev/null | grep -E 'fichas_vehiculos_[0-9]{8}\.xlsx$' | grep -v '_completo' | sort -r | head -n 1 || true)
+            if [ -z "${LATEST:-}" ]; then
+              echo "⛔ No hay ningún Excel base disponible en el workspace."
+              echo "skip=true" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            EXCEL_IN="$LATEST"
+          fi
+
+          echo "✅ Excel de entrada: $EXCEL_IN"
+          echo "EXCEL_IN=$EXCEL_IN" >> $GITHUB_ENV
+          echo "skip=false"       >> $GITHUB_OUTPUT
+
+      # --- Fase 2 ---
+      - name: "Run Phase 2 (economic scrape) with retry"
+        if: ${{ steps.preparar.outputs.skip != 'true' }}
+        run: |
+          n=0
+          until [ $n -ge 2 ]; do
+            python Fase2_cloud.py -i "${{ env.EXCEL_IN }}" -s bca_storage_phase1.json && break
+            n=$((n+1))
+            echo "Retrying in 20s..."
+            sleep 20
+          done
+
+      # --- Guard de columnas requeridas por economics_merge (para fases siguientes) ---
+      - name: "Verify Fase 2 columns (lot_status, winning_bid, currency)"
+        id: guard_fase2
+        if: ${{ steps.preparar.outputs.skip != 'true' }}
+        run: >
+          python -c "import os,sys,pandas as pd;
+          f=os.environ.get('EXCEL_IN');
+          (print(f'⛔ Falta Excel de entrada: {f}') or sys.exit(1)) if not f or not os.path.exists(f) else None;
+          df=pd.read_excel(f);
+          cols={c.lower() for c in df.columns};
+          needed={'lot_status','winning_bid','currency'};
+          miss=needed-cols;
+          (print('⛔ Faltan columnas de Fase 2:',miss,'en',f) or sys.exit(1)) if miss else print('✅ Fase 2 OK. Columnas presentes:',needed)"
+
+      # ========================
+      #   FASE TRANSPORTE
+      # ========================
+      - name: Transporte — enriquecer y mantener mismo nombre
+        if: ${{ steps.guard_fase2.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python transport_enrich_patched.py \
+            --excel "${{ env.EXCEL_IN }}" \
+            --transporte "bca_transporte_estructurado.csv" \
+            --country_dict "country_dict_ready.en.csv" \
+            --location_aliases "location_country_aliases_ready.en.csv" \
+            --body_rules "transport_body_map.v2.json" \
+            --brands "compound_brands.v2.json" \
+            --stops "compound_stops.v2.json" \
+            --dest "${{ env.DEST_COUNTRY }}" \
+            --out "${{ env.EXCEL_IN }}.tmp.xlsx"
+          mv "${{ env.EXCEL_IN }}.tmp.xlsx" "${{ env.EXCEL_IN }}"
+
+      - name: "Verify Transporte output columns"
+        id: guard_transporte
+        if: ${{ steps.guard_fase2.outcome == 'success' }}
+        run: >
+          python -c "import os,sys,pandas as pd;
+          f=os.environ.get('EXCEL_IN'); df=pd.read_excel(f);
+          cols=set(df.columns);
+          ok=('transport_price_eur' in cols) or ('transport_eur' in cols);
+          (print('⛔ Falta columna de transporte (transport_price_eur o transport_eur) tras Transporte') or sys.exit(1)) if not ok else print('✅ Transporte OK en',f)"
+
+      # ========================
+      #       FASE TASAS
+      # ========================
+      - name: "Verify inputs for Tasas (winning_bid, currency, sale_country)"
+        id: guard_tasas_inputs
+        if: ${{ steps.guard_transporte.outcome == 'success' }}
+        run: >
+          python -c "import os,sys,pandas as pd;
+          f=os.environ.get('EXCEL_IN');
+          (print(f'⛔ Falta Excel de entrada: {f}') or sys.exit(1)) if not f or not os.path.exists(f) else None;
+          df=pd.read_excel(f);
+          cols_low={c.lower() for c in df.columns};
+          need_base={'winning_bid','currency'};
+          need_country_any = any(c in cols_low for c in ['sale_info_country','salecountry','sale_country']);
+          miss=need_base - cols_low;
+          (print('⛔ Faltan columnas base F2:',miss,'en',f) or sys.exit(1)) if miss else None;
+          (print('⛔ Falta una columna de país: sale_info_country | saleCountry | sale_country') or sys.exit(1)) if not need_country_any else print('✅ Inputs Tasas OK')"
+
+      - name: "Tasas — commissions-only (overwrite in-place)"
+        if: ${{ steps.guard_tasas_inputs.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python commissions_only_with_oferta_patched.py \
+            --excel "${{ env.EXCEL_IN }}" \
+            --tasas "bca_tasas_tarifas_estructuradas.xlsx" \
+            --auction_aliases "auction_aliases_ready.json" \
+            --location_country_aliases "location_country_aliases_ready.csv" \
+            --fuel_aliases "fuel_aliases.json" \
+            --country_dict "country_dict_ready.csv" \
+            --include-not-sold
+
+      - name: "Verify Tasas output columns"
+        id: guard_tasas
+        if: ${{ steps.guard_tasas_inputs.outcome == 'success' }}
+        run: |
+          python -c "import os,sys,pandas as pd
+          f=os.environ.get('EXCEL_IN')
+          df=pd.read_excel(f)
+          cols=set(df.columns)
+          pairs=[
+            {'commission_adquisicion_eur','commission_acquisition_eur'},
+            {'commission_exportacion_eur','commission_export_eur'},
+            {'commission_documentos_eur','commission_docs_eur'},
+            {'commission_diagnostico_eur','commission_diagnostic_eur'},
+            {'commission_total_eur'},
+            {'commission_rules_json'},
+            {'commission_tramitacion_eur','commission_processing_eur'},
+          ]
+          missing=[]
+          for p in pairs:
+              if cols.isdisjoint(p):
+                  missing.append(tuple(sorted(p)))
+          if missing:
+              print('⛔ Falta alguna columna commission_* tras Tasas (aceptamos ES/EN por par):', missing); sys.exit(1)
+          else:
+              print('✅ Tasas OK: commission_* presentes en', f)"
+
+      # ========================
+      #       FASE GASTOS
+      # ========================
+      - name: "Gastos — añadir fijos y precio final (overwrite in-place)"
+        if: ${{ steps.guard_tasas.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python add_fijos_y_precio_final_patched.py \
+            --fijos "bca_otros_gastos_es.csv" \
+            --excel-in "${{ env.EXCEL_IN }}" \
+            --col-fijos "fijos_es_eur" \
+            --col-final "precio_final_eur" \
+            --require-components transport,commissions
+          # Nota: el script auto-detecta transport_price_eur/transport_eur y usa commission_total_eur
+
+      - name: "Verify Gastos output columns"
+        id: guard_gastos   # <-- añadido para que se pueda referenciar en el if posterior
+        run: >
+          python -c "import os,sys,pandas as pd;
+          f=os.environ.get('EXCEL_IN'); df=pd.read_excel(f);
+          needed={'fijos_es_eur','precio_final_eur'};
+          miss=needed - {c for c in df.columns};
+          (print('⛔ Falta columna de Gastos tras la fase:',miss) or sys.exit(1)) if miss else print('✅ Gastos OK: columnas añadidas en',f)"
+
+      # ========================
+      #   COPIA FINAL + ARTEFACTOS
+      # ========================
+      - name: "Prepare final _completo filename"
+        if: ${{ steps.guard_gastos.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="${EXCEL_IN%.xlsx}"
+          EXCEL_FINAL="${BASE}_completo.xlsx"
+          cp -f "$EXCEL_IN" "$EXCEL_FINAL"
+          echo "✅ Copia final creada: $EXCEL_FINAL"
+          echo "EXCEL_FINAL=$EXCEL_FINAL" >> $GITHUB_ENV
+
+      # (opcional pero recomendado) verificación de ruta
+      - name: "Debug final file path"
+        if: ${{ steps.guard_gastos.outcome == 'success' }}
+        shell: bash
+        run: |
+          echo "EXCEL_FINAL=$EXCEL_FINAL"
+          ls -la
+          ls -la out || true
+        
+      - name: "Upload artifacts"
+        if: ${{ steps.preparar.outputs.skip != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: resultados_bca_fase2
+          path: |
+            ${{ env.EXCEL_IN }}
+            errores_fase2*.csv
+            errores_fase2_links_persistentes.csv
+            Fase2*.log
+          if-no-files-found: ignore   # evita fallo si no hay artefactos
+
+      # --- Subida a Drive ---
+      - name: "Upload results to Google Drive"
+        if: ${{ steps.guard_fase2.outcome == 'success' }}
+        run: python upload_fase2.py

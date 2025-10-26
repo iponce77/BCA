@@ -1,0 +1,163 @@
+name: BCA - Cierre mensual
+
+on:
+  schedule:
+    # 01:30 UTC on the 1st of each month
+    - cron: "30 1 1 * *"
+  workflow_dispatch:
+    inputs:
+      year_month:
+        description: "YYYY-MM (optional; defaults to previous month)"
+        required: false
+
+concurrency:
+  group: bca
+  cancel-in-progress: false
+
+jobs:
+  monthly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      BCA_RESULTS_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+      BCA_MONTHLY_FOLDER_ID: ${{ secrets.BCA_MONTHLY_FOLDER_ID }}
+      GANVAM_PARQUET_FOLDER_ID: ${{ secrets.GANVAM_PARQUET_FOLDER_ID }}
+      CONFIG_YAML: merge_config.yaml
+      CHECKPOINT_DIR: checkpoints
+      GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64_FULL }}
+      GOOGLE_DRIVE_SCOPE: https://www.googleapis.com/auth/drive
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyarrow
+
+      - name: Compute target year-month
+        id: dates
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.year_month }}" ]; then
+            YM="${{ github.event.inputs.year_month }}"
+          else
+            # previous month in UTC
+            YM=$(date -u -d "$(date +%Y-%m-01) -1 day" +%Y-%m)
+          fi
+          echo "year_month=$YM" >> $GITHUB_OUTPUT
+          echo "Working year-month: $YM"
+
+      - name: Prepare workspace
+        run: |
+          mkdir -p monthly_inputs
+          mkdir -p "${CHECKPOINT_DIR}"
+
+      - name: Fetch Ganvam master (Parquet) from Drive
+        run: |
+          python - << 'PY'
+          from pathlib import Path
+          from googleapiclient.http import MediaIoBaseDownload
+          from gdrive_auth import authenticate_drive
+          import io, os
+
+          FOLDER_ID = os.environ["GANVAM_PARQUET_FOLDER_ID"]
+          TARGET_NAME = "ganvam_fase2_normalizado.parquet"
+          OUT = Path(TARGET_NAME)
+
+          svc = authenticate_drive()
+          # Busca por nombre exacto en la carpeta
+          q = " and ".join([
+            f"'{FOLDER_ID}' in parents",
+            "trashed = false",
+            f"name = '{TARGET_NAME}'"
+          ])
+          resp = svc.files().list(
+              q=q, fields="files(id,name,modifiedTime)", pageSize=1,
+              includeItemsFromAllDrives=True, supportsAllDrives=True
+          ).execute()
+          files = resp.get("files", [])
+          if not files:
+            raise SystemExit("⛔ No se encontró ganvam_fase2_normalizado.parquet en la carpeta indicada.")
+          fid = files[0]["id"]
+
+          req = svc.files().get_media(fileId=fid)
+          buf = io.BytesIO()
+          dl = MediaIoBaseDownload(buf, req)
+          done = False
+          while not done:
+            _, done = dl.next_chunk()
+          OUT.write_bytes(buf.getvalue())
+          print(f"✅ Descargado {TARGET_NAME}")
+          PY
+
+      # Drive fetch via refresh token (no credentials.json/token.pickle)
+      - name: Fetch month from Drive
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python scripts/drive_fetch_month.py \
+            --folder "$BCA_RESULTS_FOLDER_ID" \
+            --outdir monthly_inputs \
+            --year-month "${{ steps.dates.outputs.year_month }}"
+
+      - name: Merge & dedupe by VIN (adds vin_repeat)
+        run: |
+          python scripts/monthly_merge_bca.py \
+            --indir monthly_inputs \
+            --out "bca_norm_${{ steps.dates.outputs.year_month }}.parquet" \
+            --normalizador normalizacionv2.py \
+            --whitelist whitelist.xlsx
+
+      - name: Patch merge_config.yaml to monthly file
+        run: |
+          python - << 'PY'
+          import yaml, pathlib
+          ym = "${{ steps.dates.outputs.year_month }}"
+          p = pathlib.Path("merge_config.yaml")
+          cfg = yaml.safe_load(p.read_text(encoding="utf-8"))
+          # apuntar a la salida Parquet del merge mensual
+          cfg["inputs"]["bca_norm"] = f"bca_norm_{ym}.parquet"
+          # asegurarnos de que el master también es parquet (si tu YAML aún tiene .xlsx)
+          if "master" in cfg.get("inputs", {}):
+            if str(cfg["inputs"]["master"]).endswith(".xlsx"):
+              cfg["inputs"]["master"] = "ganvam_fase2_normalizado.parquet"
+          p.write_text(yaml.safe_dump(cfg, allow_unicode=True), encoding="utf-8")
+          print("Config set to", cfg["inputs"]["bca_norm"], "and master:", cfg["inputs"].get("master"))
+          PY
+
+      - name: Run enrichment pipeline (matching + enrichment)
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          python bca_enrich_all.py \
+            --config "${CONFIG_YAML}" \
+            --log-level INFO \
+            --checkpoint-dir "${CHECKPOINT_DIR}"
+
+      - name: Upload artifacts to Actions (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: bca-monthly-${{ steps.dates.outputs.year_month }}
+          path: |
+            bca_enriched.xlsx
+            bca_enriched_analysis.xlsx
+            audit_matching.xlsx
+            ${CHECKPOINT_DIR}/bca_matched.parquet
+            bca_enriched.parquet
+
+      - name: Upload monthly outputs to Drive (new folder)
+        env:
+          PYTHONPATH: ${{ github.workspace }}  
+        run: |
+          python scripts/upload_monthly.py \
+            --folder "$BCA_MONTHLY_FOLDER_ID" \
+            --files "bca_enriched.xlsx,bca_enriched_analysis.xlsx,audit_matching.xlsx,bca_enriched.parquet"
+
