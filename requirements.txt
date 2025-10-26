@@ -1,0 +1,27 @@
+# --- Web Scraping y Navegación ---
+playwright>=1.44
+selenium>=4.8
+webdriver-manager>=3.8
+
+# --- Data ---
+pandas>=2.0
+openpyxl>=3.1
+beautifulsoup4>=4.12
+
+# --- Utilidades y Configuración ---
+python-dotenv>=1.0
+requests>=2.31
+
+# --- Google Drive API con OAuth2 ---
+google-api-python-client>=2.0
+google-auth-httplib2
+google-auth-oauthlib
+google-auth
+
+# --- Union ---
+pandas>=2.0
+numpy>=1.24
+openpyxl>=3.1
+pyarrow>=15.0
+PyYAML>=6.0
+rapidfuzz>=3.0

@@ -1,0 +1,43 @@
+variant,variant_type,country_canonical,confidence_score,source
+NL,iso2,Países Bajos,1.0,manual
+DE,iso2,Alemania,1.0,manual
+CH,iso2,Suiza,1.0,manual
+SE,iso2,Suecia,1.0,manual
+FR,iso2,Francia,1.0,manual
+BE,iso2,Bélgica,1.0,manual
+EU,alias,Europa,1.0,manual
+IT,iso2,Italia,1.0,manual
+AT,iso2,Austria,1.0,manual
+Europa,alias,Europa,1.0,manual
+Países Bajos,es,Países Bajos,1.0,manual
+España,es,España,1.0,manual
+Austria,es,Austria,1.0,manual
+Bélgica,es,Bélgica,1.0,manual
+Suecia,es,Suecia,1.0,manual
+Suiza,es,Suiza,1.0,manual
+Francia,es,Francia,1.0,manual
+Portugal,es,Portugal,1.0,manual
+Finlandia,es,Finlandia,1.0,manual
+Alemania,es,Alemania,1.0,manual
+Noruega,es,Noruega,1.0,manual
+Polonia,es,Polonia,1.0,manual
+Dinamarca,es,Dinamarca,1.0,manual
+Italia,es,Italia,1.0,manual
+Germany,en,Alemania,1.0,manual
+Italy,en,Italia,1.0,manual
+Belgium,en,Bélgica,1.0,manual
+Sweden,en,Suecia,1.0,manual
+Denmark,en,Dinamarca,1.0,manual
+France,en,Francia,1.0,manual
+Spain,en,España,1.0,manual
+Finland,en,Finlandia,1.0,manual
+Netherlands,en,Países Bajos,1.0,manual
+ES,iso2,España,1.0,manual
+PT,iso2,Portugal,1.0,manual
+DK,iso2,Dinamarca,1.0,manual
+LU,iso2,Luxemburgo,1.0,manual
+Luxembourg,en,Luxemburgo,1.0,manual
+Luxemburgo,es,Luxemburgo,1.0,manual
+LUX,iso3,Luxemburgo,1.0,manual
+PL,,Polonia,,
+Luxemburg,,Luxemburgo,,

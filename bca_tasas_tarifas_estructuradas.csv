@@ -1,0 +1,180 @@
+pais,categoria,subasta_o_tipo,precio_min,precio_max,moneda,tasa_valor,tasa_unidad,importe_minimo,puja_minima,nota,tasa_valor_eur,importe_minimo_eur,moneda_origen_valor
+Europa,adquisicion,EuroShop,,,EUR,3.0,%,450.0,,IVA no incluido,,450.0,
+Europa,adquisicion,BEV,,,EUR,450.0,EUR,,,IVA no incluido,450.0,,EUR
+Europa,adquisicion,Tesla,,,EUR,450.0,EUR,,,IVA no incluido,450.0,,EUR
+España,adquisicion,Otros,0.0,249.0,EUR,102.0,EUR,,,,102.0,,EUR
+España,adquisicion,Otros,250.0,499.0,EUR,135.0,EUR,,,,135.0,,EUR
+España,adquisicion,Otros,500.0,749.0,EUR,181.0,EUR,,,,181.0,,EUR
+España,adquisicion,Otros,750.0,999.0,EUR,198.0,EUR,,,,198.0,,EUR
+España,adquisicion,Otros,1000.0,1249.0,EUR,215.0,EUR,,,,215.0,,EUR
+España,adquisicion,Otros,1250.0,1499.0,EUR,237.0,EUR,,,,237.0,,EUR
+España,adquisicion,Otros,1500.0,1749.0,EUR,257.0,EUR,,,,257.0,,EUR
+España,adquisicion,Otros,1750.0,1999.0,EUR,279.0,EUR,,,,279.0,,EUR
+España,adquisicion,Otros,2000.0,2499.0,EUR,296.0,EUR,,,,296.0,,EUR
+España,adquisicion,Otros,2500.0,2999.0,EUR,314.0,EUR,,,,314.0,,EUR
+España,adquisicion,Otros,3000.0,3499.0,EUR,337.0,EUR,,,,337.0,,EUR
+España,adquisicion,Otros,3500.0,3999.0,EUR,340.0,EUR,,,,340.0,,EUR
+España,adquisicion,Otros,4000.0,4499.0,EUR,343.0,EUR,,,,343.0,,EUR
+España,adquisicion,Otros,4500.0,4999.0,EUR,347.0,EUR,,,,347.0,,EUR
+España,adquisicion,Otros,5000.0,5499.0,EUR,350.0,EUR,,,,350.0,,EUR
+España,adquisicion,Otros,5500.0,5999.0,EUR,353.0,EUR,,,,353.0,,EUR
+España,adquisicion,Otros,6000.0,6499.0,EUR,357.0,EUR,,,,357.0,,EUR
+España,adquisicion,Otros,6500.0,6999.0,EUR,361.0,EUR,,,,361.0,,EUR
+España,adquisicion,Otros,7000.0,7499.0,EUR,364.0,EUR,,,,364.0,,EUR
+España,adquisicion,Otros,7500.0,7999.0,EUR,367.0,EUR,,,,367.0,,EUR
+España,adquisicion,Otros,8000.0,8499.0,EUR,370.0,EUR,,,,370.0,,EUR
+España,adquisicion,Otros,8500.0,8999.0,EUR,375.0,EUR,,,,375.0,,EUR
+España,adquisicion,Otros,9000.0,9499.0,EUR,378.0,EUR,,,,378.0,,EUR
+España,adquisicion,Otros,9500.0,9999.0,EUR,381.0,EUR,,,,381.0,,EUR
+España,adquisicion,Otros,10000.0,10499.0,EUR,384.0,EUR,,,,384.0,,EUR
+España,adquisicion,Otros,10500.0,10999.0,EUR,388.0,EUR,,,,388.0,,EUR
+España,adquisicion,Otros,11000.0,11499.0,EUR,392.0,EUR,,,,392.0,,EUR
+España,adquisicion,Otros,11500.0,11999.0,EUR,395.0,EUR,,,,395.0,,EUR
+España,adquisicion,Otros,12000.0,12999.0,EUR,398.0,EUR,,,,398.0,,EUR
+España,adquisicion,Otros,13000.0,13999.0,EUR,401.0,EUR,,,,401.0,,EUR
+España,adquisicion,Otros,14000.0,14999.0,EUR,405.0,EUR,,,,405.0,,EUR
+España,adquisicion,Otros,15000.0,15999.0,EUR,409.0,EUR,,,,409.0,,EUR
+España,adquisicion,Otros,16000.0,16999.0,EUR,434.0,EUR,,,,434.0,,EUR
+España,adquisicion,Otros,17000.0,17999.0,EUR,459.0,EUR,,,,459.0,,EUR
+España,adquisicion,Otros,18000.0,18999.0,EUR,484.0,EUR,,,,484.0,,EUR
+España,adquisicion,Otros,19000.0,19999.0,EUR,509.0,EUR,,,,509.0,,EUR
+España,adquisicion,Otros,20000.0,999999.0,EUR,2.5,%,,,,,,
+España,exportacion,Exportación,,,EUR,140.0,EUR,,,,140.0,,EUR
+España,documentos,Gestión de documentos,,,EUR,69.77,EUR,,,,69.77,,EUR
+España,documentos,Transferencia de documentos,,,EUR,55.7,EUR,,,,55.7,,EUR
+España,diagnostico,Informe batería AVILOO,,,EUR,40.0,EUR,,,Aplicado a EV con informe,40.0,,EUR
+Austria,adquisicion,Mercedes-Benz Financial Services,,,EUR,2.5,%,300.0,,,,300.0,
+Austria,adquisicion,Mercedes-Benz Austria,,,EUR,1.0,%,150.0,,,,150.0,
+Austria,adquisicion,Otros,0.0,1499.0,EUR,3.3,%,275.0,,,,275.0,
+Austria,adquisicion,Otros,1500.0,,EUR,3.3,%,400.0,,,,400.0,
+Austria,adquisicion,Otros,90900.0,,EUR,3000.0,EUR,,,,3000.0,,EUR
+Austria,exportacion,Todos,,,EUR,140.0,EUR,,,,140.0,,EUR
+Austria,diagnostico,Informe batería AVILOO,,,EUR,40.0,EUR,,,,40.0,,EUR
+Bélgica,adquisicion,Alphabet,,,EUR,400.0,EUR,,,,400.0,,EUR
+Bélgica,adquisicion,Lynk&Co,,,EUR,3.0,%,,,,,,
+Bélgica,adquisicion,Otros,,,EUR,450.0,EUR,,,,450.0,,EUR
+Bélgica,exportacion,Todos,,,EUR,140.0,EUR,,,,140.0,,EUR
+Bélgica,diagnostico,Informe batería AVILOO,,,EUR,40.0,EUR,,,,40.0,,EUR
+Suecia,adquisicion,BCA Mix Open,,,SEK,2.8,%,3200.0,,,,285.92,
+Suecia,adquisicion,Subasta pública,,,SEK,5980.0,SEK,,,,534.31,,SEK
+Suecia,exportacion,Todos,,,SEK,1500.0,SEK,,,,134.02,,SEK
+Suecia,diagnostico,Informe batería AVILOO,,,EUR,40.0,EUR,,,,40.0,,EUR
+Suiza,adquisicion,Todos,,,CHF,1.6,%,250.0,,,,265.45,
+Suiza,exportacion,Todos,,,CHF,140.0,CHF,,,,148.65,,CHF
+Suiza,tramitacion,Tramitación por defecto,,,CHF,49.0,CHF,,,,52.03,,CHF
+Suiza,documentos,Gestión de documentos,,,CHF,9.9,CHF,,,,10.51,,CHF
+Suiza,diagnostico,Informe batería AVILOO,,,EUR,40.0,EUR,,,,40.0,,EUR
+Francia,adquisicion,Alphabet,,,EUR,450.0,EUR,,,,450.0,,EUR
+Francia,adquisicion,Hertz buy niw,,,EUR,250.0,EUR,,,,250.0,,EUR
+Francia,adquisicion,Renting,,,EUR,450.0,EUR,,,,450.0,,EUR
+Francia,adquisicion,CarNext,,,EUR,450.0,EUR,,,,450.0,,EUR
+Francia,adquisicion,LCV,,,EUR,3.9,%,495.0,,,,495.0,
+Francia,adquisicion,Otras,,,EUR,455.0,EUR,,,,455.0,,EUR
+Francia,adquisicion,Precio desde 50€,,,EUR,3.9,%,390.0,,,,390.0,
+Francia,adquisicion,no rodantes,,,EUR,3.9,%,390.0,,,,390.0,
+Francia,adquisicion,Vehículos para piezas,,,EUR,3.9,%,250.0,,,,250.0,
+Francia,adquisicion, 3 wheels,,,EUR,100.0,EUR,,,,100.0,,EUR
+Francia,exportacion,Todos,,,EUR,140.0,EUR,,,,140.0,,EUR
+Francia,diagnostico,Informe batería AVILOO,,,EUR,40.0,EUR,,,,40.0,,EUR
+Portugal,adquisicion,Otros,0.0,999.0,EUR,135.0,EUR,,,,135.0,,EUR
+Portugal,adquisicion,Otros,1000.0,1499.0,EUR,200.0,EUR,,,,200.0,,EUR
+Portugal,adquisicion,Otros,1500.0,5999.0,EUR,350.0,EUR,,,,350.0,,EUR
+Portugal,adquisicion,Otros,6000.0,12999.0,EUR,400.0,EUR,,,,400.0,,EUR
+Portugal,adquisicion,Otros,13000.0,19999.0,EUR,465.0,EUR,,,,465.0,,EUR
+Portugal,adquisicion,Otros,20000.0,39999.0,EUR,510.0,EUR,,,,510.0,,EUR
+Portugal,adquisicion,Otros,40000.0,,EUR,1.5,%,,,,,,
+Portugal,adquisicion,Dañados,0.0,999.0,EUR,135.0,EUR,,,,135.0,,EUR
+Portugal,adquisicion,Dañados,1000.0,1499.0,EUR,205.0,EUR,,,,205.0,,EUR
+Portugal,adquisicion,Dañados,1500.0,5999.0,EUR,375.0,EUR,,,,375.0,,EUR
+Portugal,adquisicion,Dañados,6000.0,12999.0,EUR,430.0,EUR,,,,430.0,,EUR
+Portugal,adquisicion,Dañados,13000.0,19999.0,EUR,490.0,EUR,,,,490.0,,EUR
+Portugal,adquisicion,Dañados,20000.0,39999.0,EUR,535.0,EUR,,,,535.0,,EUR
+Portugal,adquisicion,Dañados,40000.0,,EUR,1.5,%,,,,,,
+Portugal,adquisicion,Best Selection,,,EUR,400.0,EUR,,,,400.0,,EUR
+Portugal,adquisicion,Exclusivo Ayvens,,,EUR,410.0,EUR,,,,410.0,,EUR
+Portugal,adquisicion,Parceiros de Marca,,,EUR,410.0,EUR,,,,410.0,,EUR
+Portugal,adquisicion,Express Green,,,EUR,400.0,EUR,,,,400.0,,EUR
+Portugal,exportacion,Todos,,,EUR,140.0,EUR,,,,140.0,,EUR
+Portugal,documentos,Gestión de documentos,,,EUR,65.0,EUR,,,,65.0,,EUR
+Portugal,diagnostico,Informe batería AVILOO,,,EUR,40.0,EUR,,,,40.0,,EUR
+Finlandia,adquisicion,Todos,,,EUR,350.0,EUR,,,,350.0,,EUR
+Finlandia,diagnostico,Informe batería AVILOO,,,EUR,40.0,EUR,,,,40.0,,EUR
+Alemania,adquisicion,MiniPrice,0.0,1499.0,EUR,3.3,%,275.0,,,,275.0,
+Alemania,adquisicion,Used Car Mix,0.0,1499.0,EUR,3.3,%,275.0,,,,275.0,
+Alemania,adquisicion,VW,0.0,1499.0,EUR,3.3,%,275.0,,,,275.0,
+Alemania,adquisicion,Mercedes,0.0,1499.0,EUR,3.3,%,275.0,,,,275.0,
+Alemania,adquisicion,Salvage,0.0,1499.0,EUR,3.3,%,275.0,,,,275.0,
+Alemania,adquisicion,Alphabet,0.0,1499.0,EUR,3.3,%,275.0,,,,275.0,
+Alemania,adquisicion,Honda,0.0,1499.0,EUR,3.3,%,275.0,,,,275.0,
+Alemania,adquisicion,Bank,0.0,1499.0,EUR,3.3,%,275.0,,,,275.0,
+Alemania,adquisicion,MiniPrice,1500.0,,EUR,3.3,%,450.0,,,,450.0,
+Alemania,adquisicion,Used Car Mix,1500.0,,EUR,3.3,%,450.0,,,,450.0,
+Alemania,adquisicion,VW,1500.0,,EUR,3.3,%,450.0,,,,450.0,
+Alemania,adquisicion,Mercedes,1500.0,,EUR,3.3,%,450.0,,,,450.0,
+Alemania,adquisicion,Salvage,1500.0,,EUR,3.3,%,450.0,,,,450.0,
+Alemania,adquisicion,Alphabet,1500.0,,EUR,3.3,%,450.0,,,,450.0,
+Alemania,adquisicion,Honda,1500.0,,EUR,3.3,%,450.0,,,,450.0,
+Alemania,adquisicion,Bank,1500.0,,EUR,3.3,%,450.0,,,,450.0,
+Alemania,adquisicion,MiniPrice,90900.0,,EUR,3000.0,EUR,,,,3000.0,,EUR
+Alemania,adquisicion,Used Car Mix,90900.0,,EUR,3000.0,EUR,,,,3000.0,,EUR
+Alemania,adquisicion,VW,90900.0,,EUR,3000.0,EUR,,,,3000.0,,EUR
+Alemania,adquisicion,Mercedes,90900.0,,EUR,3000.0,EUR,,,,3000.0,,EUR
+Alemania,adquisicion,Salvage,90900.0,,EUR,3000.0,EUR,,,,3000.0,,EUR
+Alemania,adquisicion,Alphabet,90900.0,,EUR,3000.0,EUR,,,,3000.0,,EUR
+Alemania,adquisicion,Honda,90900.0,,EUR,3000.0,EUR,,,,3000.0,,EUR
+Alemania,adquisicion,Bank ,90900.0,,EUR,3000.0,EUR,,,,3000.0,,EUR
+Alemania,adquisicion,Organismos Oficiales,,,EUR,15.0,%,,,,,,
+Alemania,adquisicion,CarNext Premium,,,EUR,450.0,EUR,,,,450.0,,EUR
+Alemania,adquisicion,dañados,,,EUR,450.0,EUR,,,,450.0,,EUR
+Alemania,adquisicion,Total Loss,,,EUR,450.0,EUR,,,,450.0,,EUR
+Alemania,adquisicion,Ford,,,EUR,2.0,%,,,,,,
+Alemania,adquisicion,Nissan,,,EUR,2.62,%,,,,,,
+Alemania,adquisicion,Renault,,,EUR,2.95,%,249.0,,,,249.0,
+Alemania,adquisicion,Transporter,,,EUR,2.5,%,200.0,,,,200.0,
+Alemania,exportacion,Exportación,,,EUR,140.0,EUR,,,,140.0,,EUR
+Alemania,logistica,Tarifa fija logística,,,EUR,90.0,EUR,,,,90.0,,EUR
+Alemania,diagnostico,Informe batería AVILOO,,,EUR,40.0,EUR,,,,40.0,,EUR
+Noruega,adquisicion,Todos,,,NOK,5500.0,NOK,,,,462.43,,NOK
+Noruega,diagnostico,Informe batería AVILOO,,,EUR,40.0,EUR,,,,40.0,,EUR
+Polonia,adquisicion,Todos,,,EUR,325.0,EUR,,,,325.0,,EUR
+Polonia,exportacion,Exportación,,,EUR,140.0,EUR,,,,140.0,,EUR
+Polonia,diagnostico,Informe batería AVILOO,,,EUR,40.0,EUR,,,,40.0,,EUR
+Países Bajos,adquisicion,clientes desde otro país,15000.0,,EUR,1.5,%,600.0,,,,600.0,
+Países Bajos,adquisicion,Bicicletas,0.0,499.0,EUR,50.0,EUR,,,,50.0,,EUR
+Países Bajos,adquisicion,Bicicletas,500.0,1499.0,EUR,90.0,EUR,,,,90.0,,EUR
+Países Bajos,adquisicion,Bicicletas,1500.0,2499.0,EUR,160.0,EUR,,,,160.0,,EUR
+Países Bajos,adquisicion,Bicicletas,2500.0,5000.0,EUR,200.0,EUR,,,,200.0,,EUR
+Países Bajos,adquisicion,Bicicletas,5000.0,,EUR,250.0,EUR,,,,250.0,,EUR
+Países Bajos,adquisicion,Alphabet,,,EUR,295.0,EUR,,,,295.0,,EUR
+Países Bajos,adquisicion,Subasta de ruedas,,,EUR,120.75,EUR,,,Depósito IVA 21%,120.75,,EUR
+Países Bajos,exportacion,Exportar sin BPM,,,EUR,140.0,EUR,,,,140.0,,EUR
+Países Bajos,documentos,Gestión de documentos,,,EUR,25.0,EUR,,,,25.0,,EUR
+Países Bajos,exportacion,motocicleta,,,EUR,140.0,EUR,,,Depósito IVA: 21%,140.0,,EUR
+Países Bajos,documentos,Exportación motocicleta: gestión de documentos,,,EUR,25.0,EUR,,,,25.0,,EUR
+Países Bajos,transporte,Recargo no rodantes,,,EUR,30.0,EUR,,,,30.0,,EUR
+Países Bajos,transporte,Bicicleta,,,EUR,65.0,EUR,,,,65.0,,EUR
+Países Bajos,transporte,Motocicleta,,,EUR,85.0,EUR,,,,85.0,,EUR
+Países Bajos,transporte,Carga transporte motocicleta XXL,,,EUR,100.0,EUR,,,,100.0,,EUR
+Países Bajos,servicios,Carga de vehículos eléctricos,,,EUR,35.0,EUR,,,,35.0,,EUR
+Países Bajos,diagnostico,Informe batería AVILOO,,,EUR,40.0,EUR,,,,40.0,,EUR
+Dinamarca,adquisicion,Comerciales y turismos,,,EUR,2.5,%,300.0,,,,300.0,
+Dinamarca,adquisicion,Tax free YoungCars Live Online,,,EUR,3.15,%,300.0,,,,300.0,
+Dinamarca,adquisicion,Europcar Summer Fleet - xBid,,,EUR,3.15,%,300.0,,,,300.0,
+Dinamarca,adquisicion,Turismos con impuestos de lujo - xBid,,,DKK,2800.0,DKK,,,,375.17,,DKK
+Dinamarca,adquisicion,Turismos sin impuestos de lujo - xBid,,,EUR,3.15,%,300.0,,,,300.0,
+Dinamarca,adquisicion,Top Conditions,,,EUR,3.15,%,300.0,,,,300.0,
+Dinamarca,adquisicion,BEV,,,DKK,3350.0,DKK,,,,448.86,,DKK
+Dinamarca,adquisicion,Subasta pública,,,DKK,2235.0,DKK,,,,299.47,,DKK
+Dinamarca,exportacion,Exportación,,,EUR,140.0,EUR,,,,140.0,,EUR
+Dinamarca,exportacion,Exportación (subastas públicas),,,DKK,745.0,DKK,,,,99.82,,DKK
+Dinamarca,exportacion,BEV,,,DKK,930.0,DKK,,,,124.61,,DKK
+Dinamarca,exportacion,turismos con impuestos de lujo,,,EUR,0.0,EUR,,,,0.0,,EUR
+Dinamarca,diagnostico,Informe batería AVILOO,,,EUR,40.0,EUR,,,,40.0,,EUR
+Italia,adquisicion,Coches y comerciales,0.0,4999.0,EUR,7.0,%,290.0,,,,290.0,
+Italia,adquisicion,Coches y comerciales,5000.0,9999.0,EUR,4.5,%,390.0,,,,390.0,
+Italia,adquisicion,Coches y comerciales,10000.0,,EUR,3.5,%,450.0,,,,450.0,
+Italia,adquisicion,Vehículos pesados,0.0,2499.0,EUR,105.0,EUR,,,,105.0,,EUR
+Italia,adquisicion,Vehículos pesados,2500.0,,EUR,4.2,%,,,,,,
+Italia,exportacion,Exportación,,,EUR,140.0,EUR,,,,140.0,,EUR
+Italia,documentos,Gestión de documentos (todos los clientes),,,EUR,150.0,EUR,,,,150.0,,EUR
+Italia,diagnostico,Informe batería AVILOO,,,EUR,40.0,EUR,,,,40.0,,EUR

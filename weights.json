@@ -1,0 +1,30 @@
+{
+  "default": {
+    "recall": 0.45, "pref": 0.20, "length": 0.05, "subset": 0.10,
+    "digits": 0.05, "guard": 0.10, "v2flag": 0.15, "family": 0.10, "lex": 0.10,
+    "first_token": 0.20, "pref_pos": 0.15, "present": 0.25
+  },
+  "BMW": {
+    "v2flag": 0.22,
+    "subset": 0.15,
+    "digits": 0.08,
+    "recall": 0.4,
+    "pref": 0.2
+  },
+  "MERCEDES BENZ": {
+    "guard": 0.18,
+    "family": 0.12,
+    "coupe": 0.35, 
+    "first_token": 0.25
+  },
+  "VOLKSWAGEN": {
+    "v2flag": 0.18,
+    "lex": 0.12
+  },
+  "MAZDA": {
+    "family": 0.14
+  },
+  "MINI": {
+    "guard": 0.05
+  }
+}

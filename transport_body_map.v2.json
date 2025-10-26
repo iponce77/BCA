@@ -1,0 +1,63 @@
+{
+  "rules": [
+    {
+      "category": "lcv",
+      "match_type": "regex",
+      "patterns": [
+        "\\bfurg\\w*\\b",
+        "\\bvan\\b",
+        "\\blcv\\b",
+        "\\bbox\\b",
+        "\\bcabina\\b",
+        "\\bchasis\\b",
+        "\\bchassis\\b",
+        "\\bpick[- ]?up\\b",
+        "\\bcam[ií]on\\b",
+        "\\bindustrial\\b",
+        "\\bautocaravana\\b",
+        "\\bautob[úu]s\\b",
+        "\\bbus\\b",
+        "\\btruck\\b",
+        "\\bbox\\s?wagon\\b",
+        "\\bbox\\s?wagon\\s?high\\s?roof\\b",
+        "\\bbox\\s?wagon\\s?large\\s?capacity\\b",
+        "\\bcrew\\s?cab\\b",
+        "\\bplatform\\b",
+        "\\bflatbed\\b",
+        "\\bfurgoneta\\b",
+        "\\bpickup\\b"
+      ],
+      "examples": ["van","box wagon","furgón largo","cabina de plataforma","camión doble cabina"],
+      "justification": "Tokens relacionados con LCV (vans, box wagons, pickups o trucks) indican categoría LCV."
+    },
+    {
+      "category": "suv",
+      "match_type": "regex",
+      "patterns": [
+        "\\bsuv\\b",
+        "\\bstation\\s?wagon\\b",
+        "\\bstationwagon\\b",
+        "\\bestate\\b",
+        "\\bfamiliar\\b",
+        "\\bcombi\\b",
+        "\\btouring\\b",
+        "\\bkombi\\b",
+        "\\btodoterreno\\b",
+        "\\b4x4\\b",
+        "\\bsobrelevad[ao]\\b",
+        "\\bmonovolumen(?:es)?\\b",
+        "\\bmpv\\b",
+        "\\bcrossover(?:s)?\\b"
+      ],
+      "examples": ["suv","stationwagon / estate","familiar","todoterreno","4x4"],
+      "justification": "Valores que describen SUV, station wagon/estate o todoterreno se mapean a SUV."
+    },
+    {
+      "category": "passenger",
+      "match_type": "fallback",
+      "patterns": [],
+      "examples": ["berlina","hatchback","sedan","coupé","cabrio","motocicleta","monovolumen"],
+      "justification": "El resto de carrocerías se tratan como passenger por defecto."
+    }
+  ]
+}

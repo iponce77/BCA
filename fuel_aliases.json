@@ -1,0 +1,174 @@
+{
+  "bev": {
+    "canonical_fuel": "electric",
+    "is_electric": true
+  },
+  "bifuel": {
+    "canonical_fuel": "unknown",
+    "is_electric": false
+  },
+  "cng": {
+    "canonical_fuel": "cng",
+    "is_electric": false
+  },
+  "cngpetrol": {
+    "canonical_fuel": "cng",
+    "is_electric": false
+  },
+  "diesel": {
+    "canonical_fuel": "diesel",
+    "is_electric": false
+  },
+  "Diesel y Electrico": {
+    "canonical_fuel": "phev",
+    "is_electric": false
+  },
+  "Diesel y Eléctrico": {
+    "canonical_fuel": "phev",
+    "is_electric": false
+  },
+  "Diésel y Eléctrico": {
+    "canonical_fuel": "phev",
+    "is_electric": false
+  },
+  "dye": {
+    "canonical_fuel": "phev",
+    "is_electric": false
+  },
+  "DYE": {
+    "canonical_fuel": "phev",
+    "is_electric": false
+  },
+  "DyE": {
+    "canonical_fuel": "phev",
+    "is_electric": false
+  },
+  "electric": {
+    "canonical_fuel": "electric",
+    "is_electric": true
+  },
+  "eléctrico": {
+    "canonical_fuel": "electric",
+    "is_electric": true
+  },
+  "flexfuel": {
+    "canonical_fuel": "petrol",
+    "is_electric": false
+  },
+  "FLEXFUEL": {
+    "canonical_fuel": "petrol",
+    "is_electric": false
+  },
+  "G.L.P.": {
+    "canonical_fuel": "lpg",
+    "is_electric": false
+  },
+  "G.N.C.": {
+    "canonical_fuel": "cng",
+    "is_electric": false
+  },
+  "gasolina": {
+    "canonical_fuel": "petrol",
+    "is_electric": false
+  },
+  "Gasolina y Electrico": {
+    "canonical_fuel": "phev",
+    "is_electric": false
+  },
+  "Gasolina y Eléctrico": {
+    "canonical_fuel": "phev",
+    "is_electric": false
+  },
+  "glp": {
+    "canonical_fuel": "lpg",
+    "is_electric": false
+  },
+  "GLP": {
+    "canonical_fuel": "lpg",
+    "is_electric": false
+  },
+  "gnc": {
+    "canonical_fuel": "cng",
+    "is_electric": false
+  },
+  "GNC": {
+    "canonical_fuel": "cng",
+    "is_electric": false
+  },
+  "gye": {
+    "canonical_fuel": "phev",
+    "is_electric": false
+  },
+  "GYE": {
+    "canonical_fuel": "phev",
+    "is_electric": false
+  },
+  "GyE": {
+    "canonical_fuel": "phev",
+    "is_electric": false
+  },
+  "hev": {
+    "canonical_fuel": "hev",
+    "is_electric": false
+  },
+  "hevdiesel": {
+    "canonical_fuel": "hev",
+    "is_electric": false
+  },
+  "hevpetrol": {
+    "canonical_fuel": "hev",
+    "is_electric": false
+  },
+  "hybrid": {
+    "canonical_fuel": "hev",
+    "is_electric": false
+  },
+  "hydrogen": {
+    "canonical_fuel": "hydrogen",
+    "is_electric": false
+  },
+  "lpg": {
+    "canonical_fuel": "lpg",
+    "is_electric": false
+  },
+  "m": {
+    "canonical_fuel": "cng",
+    "is_electric": false
+  },
+  "M": {
+    "canonical_fuel": "cng",
+    "is_electric": false
+  },
+  "mhevdiesel": {
+    "canonical_fuel": "diesel",
+    "is_electric": false
+  },
+  "mhevpetrol": {
+    "canonical_fuel": "hev",
+    "is_electric": false
+  },
+  "petrol": {
+    "canonical_fuel": "petrol",
+    "is_electric": false
+  },
+  "phev": {
+    "canonical_fuel": "phev",
+    "is_electric": false
+  },
+  "phevpetrol": {
+    "canonical_fuel": "phev",
+    "is_electric": false
+  },
+  "s": {
+    "canonical_fuel": "lpg",
+    "is_electric": false
+  },
+  "S": {
+    "canonical_fuel": "lpg",
+    "is_electric": false
+  },
+  "unknown": {
+    "canonical_fuel": "unknown",
+    "is_electric": false
+  }
+}

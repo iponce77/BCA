@@ -1,0 +1,32 @@
+raw_fuel,raw_norm,canonical_fuel,is_electric,confidence,notes,source_file,count;;;;;;;;
+CNG,cng,cng,False,0.9,matched substrings,fichas_vehiculos_20250722_completo.xlsx;fichas_vehiculos_20250723_completo.xlsx;fichas_vehiculos_20250724_completo.xlsx;fichas_vehiculos_20250725_completo.xlsx,27;;;;;
+G.N.C.,gnc,cng,False,,,,
+GNC,gnc,cng,False,,,,
+gnc,gnc,cng,False,,,,
+M,m,cng,False,,,,
+Diesel,diesel,diesel,False,0.9,matched substrings,fichas_vehiculos_20250717.xlsx;fichas_vehiculos_20250718_completo.xlsx;fichas_vehiculos_20250720_completo.xlsx;fichas_vehiculos_20250721_completo.xlsx;fichas_vehiculos_20250722_completo.xlsx;fichas_vehiculos_20250723_completo.xlsx;fichas_vehiculos_20250724_completo.xlsx;fichas_vehiculos_20250725_completo.xlsx;fichas_vehiculos_20250727_completo.xlsx,5195
+Electric,electric,electric,True,0.9,matched substrings,fichas_vehiculos_20250717.xlsx;fichas_vehiculos_20250718_completo.xlsx;fichas_vehiculos_20250720_completo.xlsx;fichas_vehiculos_20250721_completo.xlsx;fichas_vehiculos_20250722_completo.xlsx;fichas_vehiculos_20250723_completo.xlsx;fichas_vehiculos_20250724_completo.xlsx;fichas_vehiculos_20250725_completo.xlsx;fichas_vehiculos_20250727_completo.xlsx,1672
+HEVPetrol,hevpetrol,hev,False,0.9,matched substrings,fichas_vehiculos_20250717.xlsx;fichas_vehiculos_20250718_completo.xlsx;fichas_vehiculos_20250720_completo.xlsx;fichas_vehiculos_20250721_completo.xlsx;fichas_vehiculos_20250722_completo.xlsx;fichas_vehiculos_20250723_completo.xlsx;fichas_vehiculos_20250724_completo.xlsx;fichas_vehiculos_20250725_completo.xlsx;fichas_vehiculos_20250727_completo.xlsx,96
+Hybrid,hybrid,hev,False,0.9,matched substrings,fichas_vehiculos_20250717.xlsx;fichas_vehiculos_20250718_completo.xlsx;fichas_vehiculos_20250721_completo.xlsx;fichas_vehiculos_20250722_completo.xlsx;fichas_vehiculos_20250723_completo.xlsx;fichas_vehiculos_20250724_completo.xlsx;fichas_vehiculos_20250725_completo.xlsx,351;;
+MHEVPetrol,mhevpetrol,hev,False,0.9,matched substrings,fichas_vehiculos_20250717.xlsx;fichas_vehiculos_20250721_completo.xlsx;fichas_vehiculos_20250722_completo.xlsx;fichas_vehiculos_20250723_completo.xlsx;fichas_vehiculos_20250724_completo.xlsx;fichas_vehiculos_20250725_completo.xlsx,146;;;
+Hydrogen,hydrogen,hydrogen,False,0.9,matched substrings,fichas_vehiculos_20250721_completo.xlsx;fichas_vehiculos_20250724_completo.xlsx,3;;;;;;;
+G.L.P.,glp,lpg,False,,,,
+GLP,glp,lpg,False,,,,
+glp,glp,lpg,False,,,,
+LPG,lpg,lpg,False,0.9,matched substrings,fichas_vehiculos_20250721_completo.xlsx;fichas_vehiculos_20250722_completo.xlsx,3;;;;;;;
+S,s,lpg,False,,,,
+FlexFuel,flexfuel,petrol,False;;;;;;;;,,,,
+FlexFuel,flexfuel,petrol,False,,,,
+Gasolina,gasolina,petrol,False,0.9,matched substrings,fichas_vehiculos_20250717.xlsx;fichas_vehiculos_20250718_completo.xlsx;fichas_vehiculos_20250720_completo.xlsx;fichas_vehiculos_20250721_completo.xlsx;fichas_vehiculos_20250722_completo.xlsx;fichas_vehiculos_20250723_completo.xlsx;fichas_vehiculos_20250724_completo.xlsx;fichas_vehiculos_20250725_completo.xlsx;fichas_vehiculos_20250727_completo.xlsx,2872
+Diesel y Electrico,dieselyelectrico,phev,False,,,,
+Diesel y Eléctrico,dieselyelectrico,phev,False,,,,
+Diésel y Eléctrico,dieselyelectrico,phev,False,,,,
+DYE,dye,phev,False,,,,
+DyE,dye,phev,False,,,,
+Gasolina y Electrico,gasolinayelectrico,phev,False,,,,
+Gasolina y Eléctrico,gasolinayelectrico,phev,False,,,,
+GYE,gye,phev,False,,,,
+GyE,gye,phev,False,,,,
+PHEVPetrol,phevpetrol,phev,False,0.9,matched substrings,fichas_vehiculos_20250717.xlsx;fichas_vehiculos_20250718_completo.xlsx;fichas_vehiculos_20250720_completo.xlsx;fichas_vehiculos_20250721_completo.xlsx;fichas_vehiculos_20250722_completo.xlsx;fichas_vehiculos_20250723_completo.xlsx;fichas_vehiculos_20250724_completo.xlsx;fichas_vehiculos_20250725_completo.xlsx;fichas_vehiculos_20250727_completo.xlsx,466
+BiFuel,bifuel,unknown,False,0.6,no match,fichas_vehiculos_20250717.xlsx;fichas_vehiculos_20250718_completo.xlsx;fichas_vehiculos_20250720_completo.xlsx;fichas_vehiculos_20250721_completo.xlsx;fichas_vehiculos_20250722_completo.xlsx;fichas_vehiculos_20250723_completo.xlsx;fichas_vehiculos_20250724_completo.xlsx;fichas_vehiculos_20250725_completo.xlsx;fichas_vehiculos_20250727_completo.xlsx,44
+Unknown,unknown,unknown,False,0.6,no match,fichas_vehiculos_20250717.xlsx;fichas_vehiculos_20250718_completo.xlsx;fichas_vehiculos_20250721_completo.xlsx;fichas_vehiculos_20250723_completo.xlsx;fichas_vehiculos_20250724_completo.xlsx;fichas_vehiculos_20250725_completo.xlsx,28;;;

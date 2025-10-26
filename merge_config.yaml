@@ -1,0 +1,122 @@
+# merge_config.yaml (ejemplo)
+inputs:
+  bca_norm: "bca_norm.parquet"
+  master: "ganvam_fase2_normalizado.parquet"
+outputs:
+  bca_enriched_xlsx: "bca_enriched.xlsx"
+  analysis_xlsx: "bca_enriched_analysis.xlsx"
+  audit_xlsx: "audit_matching.xlsx"
+  checkpoint_dir: "checkpoints"
+  checkpoint_match: "checkpoints/bca_matched.parquet"
+columns:
+  bca:
+    marca: ["make_clean","make","marca","MARCA"]
+    modelo_base: ["modelo_base"]
+    model_bca_raw: ["model","modelo","model_bca_raw"]
+    year_bca: ["Fecha Matriculación", "fecha_matriculacion", "anio", "Año", "year"]
+    cv_bca: ["cv","potencia_cv"]
+    combustible_bca: ["fuel_type","combustible","fuel"]
+  ganvam:
+    marca: ["make_clean","make","marca","MARCA"]
+    modelo_base: ["modelo_base"]
+    model_ganvam_raw: ["model_raw","model","modelo"]
+    version_ganvam: ["version","Version"]
+    precio_venta_ganvam: ["precio_venta_ganvam","precioVenta"]
+    anio_ganvam: ["anio","year"]
+    cv_ganvam: ["cv"]
+    combustible_ganvam: ["combustible_desc","combustible"]
+aliases:
+  fuel:
+    # DIESEL
+    diesel: "DIESEL"
+    Diesel: "DIESEL"
+    DIESEL: "DIESEL"
+    mhevdiesel: "MILD HYBRID (MHEV)"
+    MHEVDIESEL: "MILD HYBRID (MHEV)"
+
+    # GASOLINA / PETROL
+    gasolina: "PETROL"
+    Gasolina: "PETROL"
+    GASOLINA: "PETROL"
+    petrol: "PETROL"
+    PETROL: "PETROL"
+    benzina: "PETROL"
+    flexfuel: "PETROL"
+    FLEXFUEL: "PETROL"
+    hevpetrol: "HIBRIDO (HEV)"
+    mhevpetrol: "MILD HYBRID (MHEV)"
+
+    # ELÉCTRICO (BEV)
+    electric: "ELECTRICO"
+    ELECTRIC: "ELECTRICO"
+    eléctrico: "ELECTRICO"
+    Eléctrico: "ELECTRICO"
+    EV: "ELECTRICO"
+    ev: "ELECTRICO"
+    bev: "ELECTRICO"
+
+    # HÍBRIDO (HEV)
+    hybrid: "HIBRIDO (HEV)"
+    HYBRID: "HIBRIDO (HEV)"
+    hev: "HIBRIDO (HEV)"
+    HEV: "HIBRIDO (HEV)"
+
+    # HÍBRIDO ENCHUFABLE (PHEV)
+    phev: "HIBRIDO ENCHUFABLE (PHEV)"
+    PHEV: "HIBRIDO ENCHUFABLE (PHEV)"
+    phevpetrol: "HIBRIDO ENCHUFABLE (PHEV)"
+    "Gasolina y Electrico": "HIBRIDO ENCHUFABLE (PHEV)"
+    "Gasolina y Eléctrico": "HIBRIDO ENCHUFABLE (PHEV)"
+    "Diesel y Electrico": "HIBRIDO ENCHUFABLE (PHEV)"
+    "Diesel y Eléctrico": "HIBRIDO ENCHUFABLE (PHEV)"
+    "Diésel y Eléctrico": "HIBRIDO ENCHUFABLE (PHEV)"
+    dye: "HIBRIDO ENCHUFABLE (PHEV)"
+    DYE: "HIBRIDO ENCHUFABLE (PHEV)"
+    DyE: "HIBRIDO ENCHUFABLE (PHEV)"
+    gye: "HIBRIDO ENCHUFABLE (PHEV)"
+    GYE: "HIBRIDO ENCHUFABLE (PHEV)"
+    GyE: "HIBRIDO ENCHUFABLE (PHEV)"
+
+    # MILD HYBRID (MHEV)
+    mhev: "MILD HYBRID (MHEV)"
+    MHEV: "MILD HYBRID (MHEV)"
+    mhevpetrol: "MILD HYBRID (MHEV)"
+    mhevdiesel: "MILD HYBRID (MHEV)"
+
+    # GAS (GLP/CNG)
+    glp: "GAS (GLP/CNG)"
+    GLP: "GAS (GLP/CNG)"
+    "G.L.P.": "GAS (GLP/CNG)"
+    lpg: "GAS (GLP/CNG)"
+    cng: "GAS (GLP/CNG)"
+    CNG: "GAS (GLP/CNG)"
+    gnc: "GAS (GLP/CNG)"
+    GNC: "GAS (GLP/CNG)"
+    "G.N.C.": "GAS (GLP/CNG)"
+    gas: "GAS (GLP/CNG)"
+
+    # HIDRÓGENO
+    hydrogen: "HIDROGENO"
+    HYDROGEN: "HIDROGENO"
+
+    # DESCONOCIDO / MIXTOS
+    bifuel: "UNKNOWN"
+    unknown: "UNKNOWN"
+    UNKNOWN: "UNKNOWN"
+
+filters:
+  allow_kw_cv_equivalence: false
+  use_fuzzy_model_base: true
+  fuzzy_model_base_threshold: 90.0
+  topk_modelo_keys: 3
+model_text:
+  stopwords: ["ltd","sa","serie","class","pack","line","sport"]
+ranking:
+  min_common_tokens: 1
+  audit_topk: 5
+  ganvam_text_source: "version_only"  # "model_plus_version" para texto más amplio
+  topk_for_cv_tiebreaker: 3
+enrich_params:
+  roi:
+    cost_cols: ["commission_total_eur","transport_price_eur","fijos_es_eur"]
+    price_col: "winning_bid"

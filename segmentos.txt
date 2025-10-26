@@ -1,0 +1,13 @@
+Segmentos de mercado (Europa):
+
+A: Minicompacto
+B: Utilitario
+C: Compacto
+D: Mediano / Familiar
+E: Grande / Ejecutivo
+F: Lujo / Representación
+JC: SUV compacto
+JD: SUV mediano
+JE: SUV grande
+M: Monovolumen
+S: Deportivo
