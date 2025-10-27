@@ -1,34 +1,9 @@
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-normalizacion_fusion_plug_prod.py
-=================================
-Orquestador de normalización (v2 + v3) listo para PRODUCCIÓN con I/O compatibles con normalizacionv2:
-
-- **Entrada**: autodetección de columnas:
-    * preferente: `make` y `model`
-    * si no existen: `marca` y `modelo`
-  (Se pueden forzar con `--make-col` / `--model-col`).
-
-- **Salida**:
-    * Escribe/actualiza **modelo_base** con el modelo normalizado.
-    * Escribe/actualiza **make_clean** con la marca normalizada.
-    * No se añaden columnas de depuración.
-
-- **Formatos**: lee y escribe `.xlsx / .xls / .csv / .parquet`.
-  (Si no se indica salida, sobreescribe el input como hace v2).
-
-- **Reglas específicas** (no afectan a otras marcas):
-    * MERCEDES: presencia estricta + preferencia posicional + COUPE (parche previo).
-    * MAZDA: regla dura `Mazda3`/`Mazda 3`/`Mazda-3` -> `3` y `Mazda6` -> `6`.
-    * MINI: filtros duros por precedencia: PACEMAN > COUNTRYMAN > CLUBMAN > ELECTRIC (SE|COOPER SE|E-MINI).
-
-Uso (compat v2):
-    python normalizacion_fusion_plug_prod.py <input.xlsx> --whitelist whitelist.xlsx --output_excel <salida.xlsx>
-    # o con flags
-    python normalizacion_fusion_plug_prod.py --input bca.parquet --whitelist whitelist.xlsx --out bca_out.parquet
+normalizacion_fusion_plug_prod_full_patched.py  (regex fixed)
 """
-
 from __future__ import annotations
 import json, re, sys, argparse
 from typing import Dict, Set, Tuple, Optional, Iterable, List
@@ -40,9 +15,6 @@ import pandas as pd
 import normalizacionv2_legacy as v2
 import normalizacionv3 as v3
 
-# ---------------------------
-# Utils / normalization
-# ---------------------------
 def _norm(s: Optional[str]) -> str:
     if s is None: return ""
     return v3.normalize_text(s)
@@ -64,9 +36,6 @@ def _jaccard(a: Iterable[str], b: Iterable[str]) -> float:
     union = len(sa | sb)
     return inter/union if union else 0.0
 
-# ---------------------------
-# Presence / positional (Mercedes)
-# ---------------------------
 def _presence_ok(brand: str, model_in_nr: str, cand: str) -> bool:
     tc = [t for t in _tokens(cand) if t not in {"MERCEDES","BENZ","MERCEDES BENZ","CLASE","CLASSE","CLASS"}]
     if not tc: return False
@@ -100,9 +69,6 @@ def _pref_pos_score(model_in_nr: str, cand: str) -> float:
         n += 1
     return (acc / n) if n>0 else 0.0
 
-# ---------------------------
-# Families / aliases (soft)
-# ---------------------------
 def _detect_family(brand: str, model_in_nr: str) -> Optional[str]:
     up = model_in_nr
     if brand == "BMW":
@@ -117,50 +83,68 @@ def _detect_family(brand: str, model_in_nr: str) -> Optional[str]:
             t0u = t0.upper()
             if t0u in fams: return fams[t0u]
     if brand == "VOLKSWAGEN":
-        m = re.search(r"\bID\s*\.?\s*(3|4|5)\b", up)
+        m = re.search(r"\bID\s*[\.\-]?([3457])\b", up)
         if m: return f"ID.{m.group(1)}"
     if brand == "MAZDA":
         m = re.search(r"\b(CX)\s*-?\s*(\d{1,2})\b", up)
         if m: return f"{m.group(1)}-{m.group(2)}"
         m = re.search(r"\b(MX)\s*-?\s*(\d{1,2})\b", up)
         if m: return f"{m.group(1)}-{m.group(2)}"
-        m = re.search(r'\bMAZDA\s*([36])\b|\bMAZDA([36])\b', up)
+        m = re.search(r"\bMAZDA\s*([2356])\b|\bMAZDA([2356])\b", up)
         if m:
-            return (m.group(1) or m.group(2))
+            d = (m.group(1) or m.group(2))
+            return d
+    if brand == "DS":
+        m = re.search(r"\bDS[\s\-]?([3457])\b", up)
+        if m: return f"DS {m.group(1)}"
+    if brand == "DR":
+        m = re.search(r"\bDR[\s\-]?(\d)(?:[.,](\d))?\b", up)
+        if m:
+            return f"DR {m.group(1)}" + (f".{m.group(2)}" if m.group(2) else "")
     return None
 
 def _canonical_alias(brand: str, disp: str) -> str:
     disp_up = disp.upper().strip()
     extra = {
-        "VOLKSWAGEN": {"ID 3":"ID.3","ID3":"ID.3","ID 4":"ID.4","ID4":"ID.4","ID 5":"ID.5","ID5":"ID.5"},
+        "VOLKSWAGEN": {
+            "ID 3":"ID.3","ID3":"ID.3","ID-3":"ID.3","ID . 3":"ID.3",
+            "ID 4":"ID.4","ID4":"ID.4","ID-4":"ID.4","ID . 4":"ID.4",
+            "ID 5":"ID.5","ID5":"ID.5","ID-5":"ID.5","ID . 5":"ID.5",
+            "ID 7":"ID.7","ID7":"ID.7","ID-7":"ID.7","ID . 7":"ID.7"
+        },
         "MAZDA": {"MX 5":"MX-5","CX 5":"CX-5","CX 30":"CX-30","MX 30":"MX-30","CX 60":"CX-60"},
+        "MG": {"EHS":"HS"},
+        "DR": {"DR3":"DR 3","DR5":"DR 5","DR4":"DR 4"},
+        "DS": {"DS3":"DS 3","DS4":"DS 4","DS5":"DS 5","DS7":"DS 7"},
     }
-    base = v3.CANONICAL_DISPLAY.get(brand, {})
+    base = getattr(v3, "CANONICAL_DISPLAY", {}).get(brand, {})
     if disp_up in base: return base[disp_up]
     if brand in extra and disp_up in extra[brand]: return extra[brand][disp_up]
     return disp
 
-# ---------------------------
-# Candidate pool (con filtros por marca)
-# ---------------------------
 def _candidate_pool(brand_raw: str, model_raw: str,
                     wl3: Dict[str, Set[str]], disp3: Dict[Tuple[str,str], str],
                     wl2: Dict[str, Set[str]]) -> Tuple[str, str, List[str], Optional[str], Optional[str]]:
     brand = v3.normalize_brand(brand_raw)
     model_in = v3.normalize_text(model_raw)
+
     if brand == "MERCEDES BENZ":
         model_in = re.sub(r"\bE[- ]?(VITO|SPRINTER|CITAN)\b", r"\1", model_in)
+
     toks = _filter_noise(_tokens(model_in), brand)
     model_in_nr = " ".join(toks) if toks else model_in
 
     cands = set(wl3.get(brand, set()))
-    v2_cand = v2.normaliza_modelo(brand_raw, model_raw, wl2)
+    v2_cand = None
+    try:
+        v2_cand = v2.normaliza_modelo(brand_raw, model_raw, wl2)
+    except Exception:
+        v2_cand = None
     if v2_cand: cands.add(_norm(v2_cand))
 
     fam = _detect_family(brand, model_in_nr)
     if fam and fam in cands: cands.add(fam)
 
-    # MERCEDES: presencia estricta + COUPE
     if brand == "MERCEDES BENZ":
         cands = {c for c in cands if _presence_ok(brand, model_in_nr, c)}
         if "COUPE" in model_in_nr:
@@ -168,7 +152,6 @@ def _candidate_pool(brand_raw: str, model_raw: str,
             if cands_coupe:
                 cands = cands_coupe
 
-    # MINI: precedencia PACEMAN > COUNTRYMAN > CLUBMAN > ELECTRIC
     if brand == "MINI":
         up = model_in_nr
         if re.search(r'\bPACEMAN\b', up):
@@ -186,9 +169,6 @@ def _candidate_pool(brand_raw: str, model_raw: str,
 
     return brand, model_in_nr, sorted(cands), v2_cand, fam
 
-# ---------------------------
-# Features & scoring
-# ---------------------------
 def _score_features(brand: str, model_in_nr: str, cand: str,
                     v2_cand: Optional[str], fam_hint: Optional[str], pool_for_guard: Set[str]) -> Dict[str, float]:
     tokens_in = _tokens(model_in_nr)
@@ -207,7 +187,11 @@ def _score_features(brand: str, model_in_nr: str, cand: str,
     subset_bonus = 1.0 if set(tokens_c) and set(tokens_c).issubset(set(tokens_in)) else 0.0
     digits_bonus = 1.0 if (any(ch.isdigit() for ch in "".join(tokens_c)) and any(ch.isdigit() for ch in "".join(tokens_in))) else 0.0
 
-    guard_choice = v3._brand_guard(brand, model_in_nr, set(pool_for_guard))
+    guard_choice = None
+    try:
+        guard_choice = v3._brand_guard(brand, model_in_nr, set(pool_for_guard))
+    except Exception:
+        guard_choice = None
     guard_bonus = 0.0
     if guard_choice:
         if _norm(guard_choice) == _norm(cand):
@@ -263,50 +247,102 @@ def _brand_weights(weights: Dict[str, Dict[str,float]], brand: str) -> Dict[str,
 def _linear_score(feats: Dict[str,float], w: Dict[str,float]) -> float:
     return sum(feats[k]*w.get(k,0.0) for k in feats.keys())
 
-# ---------------------------
-# API principal de normalización
-# ---------------------------
+def _hard_patches(brand: str, model_in_nr: str, wl3: Dict[str, Set[str]], disp3: Dict[Tuple[str,str], str]):
+    up = model_in_nr
+
+    # MERCEDES: MARCO POLO
+    if brand == "MERCEDES BENZ" and re.search(r'\bMARCO\s+POLO\b', up):
+        if "MARCO POLO" in wl3.get(brand, set()):
+            disp = disp3.get((brand, "MARCO POLO"), "MARCO POLO")
+            return _canonical_alias(brand, disp)
+
+    # LAND ROVER: D350 -> DEFENDER
+    if brand == "LAND ROVER" and re.search(r'\bD350\b', up):
+        if "DEFENDER" in wl3.get(brand, set()):
+            disp = disp3.get((brand, "DEFENDER"), "DEFENDER")
+            return _canonical_alias(brand, disp)
+
+    # MG: EHS -> HS
+    if brand == "MG" and re.search(r'\bEHS\b', up):
+        if "HS" in wl3.get(brand, set()):
+            disp = disp3.get((brand, "HS"), "HS")
+            return _canonical_alias(brand, disp)
+
+    # BMW: iXn / Xn / Zn (retorno temprano)
+    if brand == "BMW":
+        m = re.search(r'\bIX\s*([1-7])\b', up)
+        if m and f"IX{m.group(1)}" in wl3.get(brand, set()):
+            cand = f"IX{m.group(1)}"; disp = disp3.get((brand, cand), cand); return _canonical_alias(brand, disp)
+        if re.search(r'\bIX\b', up) and "IX" in wl3.get(brand, set()):
+            disp = disp3.get((brand, "IX"), "IX"); return _canonical_alias(brand, disp)
+        m = re.search(r'\bX\s*([1-7])\b', up)
+        if m and f"X{m.group(1)}" in wl3.get(brand, set()):
+            cand = f"X{m.group(1)}"; disp = disp3.get((brand, cand), cand); return _canonical_alias(brand, disp)
+        m = re.search(r'\bZ\s*([1-8])\b', up)
+        if m and f"Z{m.group(1)}" in wl3.get(brand, set()):
+            cand = f"Z{m.group(1)}"; disp = disp3.get((brand, cand), cand); return _canonical_alias(brand, disp)
+
+    # VOLVO: V/S/XC + 2 dígitos → base exacta
+    if brand == "VOLVO":
+        m = re.search(r'\b(V|S|XC)\s*-?\s*(\d{2})\b', up)
+        if m:
+            cand = f"{m.group(1)}{m.group(2)}"
+            if cand in wl3.get(brand, set()):
+                disp = disp3.get((brand, cand), cand)
+                return _canonical_alias(brand, disp)
+
+    # MAZDA: Mazda2/Mazda5 explícitos (sin colisionar con CX-5/MX-5)
+    if brand == "MAZDA":
+        if re.search(r'\bMAZDA\s*2\b|\bMAZDA2\b', up) and not re.search(r'\b(CX|MX)\s*-?\s*2\b', up):
+            if "2" in wl3.get(brand, set()):
+                disp = disp3.get((brand, "2"), "2"); return _canonical_alias(brand, disp)
+        if re.search(r'\bMAZDA\s*5\b|\bMAZDA5\b', up) and not re.search(r'\b(CX|MX)\s*-?\s*5\b', up):
+            if "5" in wl3.get(brand, set()):
+                disp = disp3.get((brand, "5"), "5"); return _canonical_alias(brand, disp)
+        if re.search(r'\bMAZDA\s*3\b|\bMAZDA3\b', up) and not re.search(r'\b(CX|MX)\s*-?\s*3\b', up):
+            if "3" in wl3.get(brand, set()):
+                disp = disp3.get((brand, "3"), "3"); return _canonical_alias(brand, disp)
+        if re.search(r'\bMAZDA\s*6\b|\bMAZDA6\b', up) and not re.search(r'\b(CX|MX)\s*-?\s*6\b', up):
+            if "6" in wl3.get(brand, set()):
+                disp = disp3.get((brand, "6"), "6"); return _canonical_alias(brand, disp)
+
+
+    # VOLKSWAGEN: ID plain -> ID.x (3/4/5/7)
+    if brand == "VOLKSWAGEN":
+        m = re.search(r'\bID\s*[.\-]?(3|4|5|7)\b', up)
+        if m:
+            fam = f"ID.{m.group(1)}"
+            if fam in wl3.get(brand, set()):
+                disp = disp3.get((brand, fam), fam)
+                return _canonical_alias(brand, disp)
+
+    return None
+
 def normaliza_modelo_fusion(marca: str, modelo: str,
                             wl3: Dict[str, Set[str]], disp3: Dict[Tuple[str,str], str], wl2: Dict[str,Set[str]],
                             weights: Dict[str,Dict[str,float]]) -> Tuple[Optional[str], Optional[str], float]:
     brand, model_in_nr, pool, v2_cand, fam_hint = _candidate_pool(marca, modelo, wl3, disp3, wl2)
 
-    # --- PATCH MERCEDES seguro (anclado al inicio y sin interferencias) ---
-    # Detecta patrones tipo 'A140', 'C 220', 'E-300' SOLO si aparecen al inicio del texto.
-    # Evita falsos positivos como 'S213' (código de chasis del Clase E Estate) o '... COUPE 220'.
+    hard = _hard_patches(brand, model_in_nr, wl3, disp3)
+    if hard:
+        return hard, None, 1.0
+
     if brand == "MERCEDES BENZ":
         m0 = re.match(r'^([ABCES])[-\s]?\d{2,3}', model_in_nr, flags=re.I)
         if m0:
             fam = f"CLASE {m0.group(1).upper()}"
-            # Construir variante COUPE si procede y existe en whitelist
             coupe_present = bool(re.search(r'\bCOUPE\b', model_in_nr))
             fam_coupe = f"{fam} COUPE" if coupe_present else None
-
             wl3_norm = { _norm(c) for c in wl3.get(brand, set()) }
             chosen = None
             if fam_coupe and _norm(fam_coupe) in wl3_norm:
                 chosen = fam_coupe
             elif _norm(fam) in wl3_norm:
                 chosen = fam
-
             if chosen:
                 disp_fam = disp3.get((brand, _norm(chosen)), chosen)
                 disp_fam = _canonical_alias(brand, disp_fam)
                 return disp_fam, None, 1.0
-    # --- FIN PATCH MERCEDES seguro ---
-
-
-
-    # MAZDA: regla dura Mazda3/Mazda6
-    if brand == "MAZDA":
-        raw_up = v3.normalize_text(modelo)
-        m = re.search(r'\bMAZDA[\s\-_]*([36])(?!\d)\b', raw_up)
-        if m:
-            forced = m.group(1)
-            if forced in wl3.get("MAZDA", set()):
-                disp_forced = disp3.get(("MAZDA", forced), forced)
-                disp_forced = _canonical_alias(brand, disp_forced)
-                return disp_forced, None, 1.0
 
     if not pool:
         return None, None, 0.0
@@ -334,9 +370,6 @@ def normaliza_modelo_fusion(marca: str, modelo: str,
     confidence = float(max(0.0, s1 - s2))
     return disp_best, disp_second, confidence
 
-# ---------------------------
-# IO helpers (compat normalizacionv2)
-# ---------------------------
 def _load_input(input_path: str, sheet=None) -> pd.DataFrame:
     p = Path(input_path)
     suf = p.suffix.lower()
@@ -344,7 +377,6 @@ def _load_input(input_path: str, sheet=None) -> pd.DataFrame:
         return pd.read_parquet(p)
     if suf in (".xlsx", ".xls"):
         return pd.read_excel(p, sheet_name=(sheet or 0), engine="openpyxl")
-    # csv
     try:
         return pd.read_csv(p)
     except UnicodeDecodeError:
@@ -360,78 +392,56 @@ def _save_output(df: pd.DataFrame, out_path: str):
     else:
         df.to_csv(p, index=False)
 
-# ---------------------------
-# CLI
-# ---------------------------
 def parse_args(argv):
-    ap = argparse.ArgumentParser(description="Normalizador fusión v2+v3 (producción, IO estilo v2)")
-    # Compat con v2: positional input o --input
+    ap = argparse.ArgumentParser(description="Normalizador fusión v2+v3 (producción) [FULL PATCHED]")
     ap.add_argument("positional_input", nargs="?", help="(compat) input si no usas --input")
     ap.add_argument("--input", help="Ruta de entrada (.xlsx/.xls/.csv/.parquet)")
     ap.add_argument("--sheet", default=None, help="Hoja si Excel")
     ap.add_argument("--make-col", default="make", help="Columna marca preferente (default: make)")
     ap.add_argument("--model-col", default="model", help="Columna modelo preferente (default: model)")
     ap.add_argument("--whitelist", required=True, help="Ruta XLSX whitelist")
-    # Salida (compat)
     ap.add_argument("--output_excel", help="(compat) salida .xlsx")
     ap.add_argument("--out", help="Salida si no usas --output_excel (admite .xlsx/.csv/.parquet)")
-    # Pesos opcionales
     ap.add_argument("--weights", default="weights.json", help="Pesos JSON (opcional)")
     return ap.parse_args(argv)
 
 def main(argv=None):
     args = parse_args(argv or sys.argv[1:])
-
     input_path = args.input or args.positional_input
     if not input_path:
         raise SystemExit("Debes indicar un input: positional o --input")
+    out_path = args.output_excel or args.out or input_path
 
-    out_path = args.output_excel or args.out or input_path  # como v2: si no se indica, sobreescribe
-
-    # Cargar datos
     df = _load_input(input_path, sheet=getattr(args, "sheet", None))
 
-    # Detectar columnas marca/modelo como en v2
     cols_lower = {c.lower(): c for c in df.columns}
-    make_col = args.make_col if args.make_col in df.columns else None
-    model_col = args.model_col if args.model_col in df.columns else None
+    make_col  = args.make_col if args.make_col in df.columns else (cols_lower.get("make") or cols_lower.get("marca") or cols_lower.get("make_clean"))
+    model_col = args.model_col if args.model_col in df.columns else (cols_lower.get("model") or cols_lower.get("modelo"))
+    if not make_col or not model_col:
+        raise SystemExit("No encuentro columnas de marca/modelo. Usa --make-col/--model-col.")
 
-    if not make_col:
-        if "make" in cols_lower:
-            make_col = cols_lower["make"]
-        elif "marca" in cols_lower:
-            make_col = cols_lower["marca"]
-        else:
-            raise SystemExit("No encuentro columna de marca (make/marca). Usa --make-col <col>")
-
-    if not model_col:
-        if "model" in cols_lower:
-            model_col = cols_lower["model"]
-        elif "modelo" in cols_lower:
-            model_col = cols_lower["modelo"]
-        else:
-            raise SystemExit("No encuentro columna de modelo (model/modelo). Usa --model-col <col>")
-
-    # Cargar recursos
     wl3 = v3.carga_whitelist(args.whitelist)
     disp3 = v3._v3_build_display_map(args.whitelist)
-    wl2 = v2.carga_whitelist(args.whitelist)
+    try:
+        wl2  = v2.carga_whitelist(args.whitelist)
+    except Exception:
+        wl2 = {}
     weights = _load_weights(args.weights)
 
-    # Ejecutar
-    out = df.copy()
-    bests = []
-
+    out_best = []
     for _, r in df.iterrows():
-        b, s, conf = normaliza_modelo_fusion(r[make_col], r[model_col], wl3, disp3, wl2, weights)
-        bests.append(b)
+        mk = r.get(make_col)
+        md = r.get(model_col)
+        try:
+            best, _, _ = normaliza_modelo_fusion(mk, md, wl3, disp3, wl2, weights)
+        except Exception:
+            best = None
+        out_best.append(best)
 
-    # Salida EXACTA: modelo_base + make_clean (marca normalizada)
-    out["modelo_base"] = bests
-    out["make_clean"] = out[make_col].apply(v3.normalize_brand)
-
+    out = df.copy()
+    out["modelo_base"] = out_best
+    out["make_clean"]  = out[make_col].apply(v3.normalize_brand)
     _save_output(out, out_path)
-    print(f"OK -> {out_path}")
 
 if __name__ == "__main__":
     main()
