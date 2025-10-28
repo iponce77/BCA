@@ -1,0 +1,43 @@
+brands:
+- aliases:
+  - MERCEDES-BENZ
+  - MB
+  - MERCEDES
+  canonical: MERCEDES BENZ
+- aliases:
+  - VW
+  - VOLKSWAGEN
+  canonical: VOLKSWAGEN
+- aliases:
+  - "\u0160KODA"
+  - SKODA
+  canonical: SKODA
+fuels:
+- aliases:
+  - DIESEL
+  - GASOIL
+  canonical: DIESEL
+- aliases:
+  - GASOLINA
+  - PETROL
+  - BENZINA
+  canonical: GASOLINA
+- aliases:
+  - HEV
+  - MHEV
+  - HYBRID
+  - HIBRIDO
+  - "H\xCDBRIDO"
+  canonical: HEV
+- aliases:
+  - PHEV
+  - PLUG IN
+  - PLUG-IN
+  - ENCHUFABLE
+  canonical: PHEV
+- aliases:
+  - BEV
+  - EV
+  - ELECTRICO
+  - "EL\xC9CTRICO"
+  canonical: BEV
