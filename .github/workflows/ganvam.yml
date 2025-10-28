@@ -6,11 +6,10 @@ on:
   workflow_dispatch:      # ejecución manual opcional
 
 permissions:
-  contents: write   # necesario para commitear ganvam_state.json (aunque la sonda esté desactivada)
+  contents: write   # necesario para commitear ganvam_state.json
 
 jobs:
   sonda:
-    if: ${{ false }}  # <-- Sonda desactivada
     runs-on: ubuntu-latest
     outputs:
       nuevo_periodo: ${{ steps.detect.outputs.nuevo_periodo }}
@@ -45,7 +44,8 @@ jobs:
           git push
 
   pipeline:
-    # sin needs / if: ejecuta siempre
+    needs: sonda
+    if: needs.sonda.outputs.nuevo_periodo == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,7 +62,7 @@ jobs:
         working-directory: "precio venta"
         env:
           GANVAM_TOKEN: ${{ secrets.GANVAM_TOKEN }}
-          GANVAM_PERIODO: "213"   # <-- periodo fijo solicitado
+          GANVAM_PERIODO: ${{ needs.sonda.outputs.periodo }}
         run: python fase1.py
 
       - name: Run Fase 2
