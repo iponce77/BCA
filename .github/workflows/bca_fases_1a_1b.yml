@@ -62,6 +62,7 @@ jobs:
           # y el script: normalizacionv2.py en la raíz o ajusta la ruta.
           python normalizacionv2.py fichas_vehiculos_${HOY}.xlsx \
             --whitelist whitelist.xlsx \
+            --weights weights.json \
             --output_excel fichas_vehiculos_${HOY}.xlsx
 
       - name: Subir Excel resultado para la siguiente fase
