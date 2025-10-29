@@ -9,6 +9,7 @@ import logging
 import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional
+from datetime import datetime
 
 import requests
 import pandas as pd
@@ -72,6 +73,18 @@ def list_parquets_in_folder(service, folder_id: str) -> Dict[str, str]:
             break
     return meses
 
+def _yyyymm_to_int(ym: str) -> int:
+    # "YYYYMM" -> 202501
+    return int(ym)
+
+def _months_ago_yyyymm(n: int) -> int:
+    # devuelve YYYYMM numérico de "hace n meses"
+    now = datetime.utcnow()
+    y, m = now.year, now.month
+    total = y * 12 + (m - 1) - n
+    yy = total // 12
+    mm = total % 12 + 1
+    return yy * 100 + mm
 def upload_parquet(service, folder_id: str, local_path: Path, target_name: str) -> str:
     """
     Subida robusta a Drive:
@@ -229,7 +242,7 @@ def run_normalizacionv2_over_parquet(
 #   MAIN PIPELINE
 # =========================
 def main():
-    folder_id = os.environ["DGT_PARQUET_FOLDER_ID"]  # secret
+    folder_id = os.environ["DGT_PARQUET_FOLDER_ID"]
     normalizador = Path(os.environ.get("NORMALIZADOR_DGT_PATH", "normalizacionv2.py"))
     whitelist = Path(os.environ.get("NORMALIZADOR_WHITELIST_PATH", "whitelist.xlsx"))
 
@@ -250,9 +263,34 @@ def main():
     disponibles = list_dgt_zip_urls()
     lap(t, f"Listado DGT OK ({len(disponibles)} meses detectados)")
 
-    pendientes = sorted([ym for ym in disponibles.keys() if ym not in ya_subidos])
+    # ---------------------------
+    # NUEVO: filtros de ventana
+    # ---------------------------
+    only_last_months = int(os.environ.get("DGT_ONLY_LAST_MONTHS", "24"))
+    min_yyyymm_env = os.environ.get("DGT_MIN_YYYYMM", "").strip()
+
+    # cutoff por "últimos N meses"
+    cutoff_yyyymm = _months_ago_yyyymm(only_last_months - 1) if only_last_months > 0 else 0
+    # cutoff explícito opcional (si se define, manda sobre cutoff_yyyymm si es más reciente)
+    explicit_min = _yyyymm_to_int(min_yyyymm_env) if min_yyyymm_env else 0
+    effective_min = max(cutoff_yyyymm, explicit_min)
+
+    pendientes_all = sorted([ym for ym in disponibles.keys() if ym not in ya_subidos])
+    # Aplicar ventana mínima
+    pendientes_filtered = [ym for ym in pendientes_all if _yyyymm_to_int(ym) >= effective_min]
+
+    # Limitar a los más recientes primero
+    max_per_run = int(os.environ.get("DGT_MAX_FILES_PER_RUN", "6"))
+    pendientes = sorted(pendientes_filtered, reverse=True)[:max_per_run]
+
+    logger.info(
+        f"Pendientes totales (sin filtro): {len(pendientes_all)} | "
+        f"efective_min={effective_min} | tras filtro: {len(pendientes_filtered)} | "
+        f"a procesar en este run (top {max_per_run}): {pendientes}"
+    )
+
     if not pendientes:
-        logger.info("No hay meses nuevos.")
+        logger.info("No hay meses nuevos dentro de la ventana configurada.")
         return
 
     workdir = Path("dgt_work")
