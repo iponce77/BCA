@@ -1,54 +1,148 @@
-# scripts/dgt/automatizacion_dgt.py
+# scripts/DGT/automatizacion_dgt.py
 from __future__ import annotations
-import os, io, re, zipfile, tempfile, json
+import os
+import re
+import io
+import time
+import zipfile
+import logging
+import tempfile
 from pathlib import Path
-from typing import List, Dict, Set
+from typing import Dict, List, Optional
+
 import requests
-from bs4 import BeautifulSoup
 import pandas as pd
-from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+from bs4 import BeautifulSoup
+from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
 
-# 1) Autenticación Drive (reutiliza helper del repo)
 from gdrive_auth import authenticate_drive  # usa GOOGLE_OAUTH_B64 + scope drive.file
-# 2) Parser -> Parquet
 from scripts.DGT.parse_dgt import txt_to_parquet
 
-URL_DGT = "https://www.dgt.es/menusecundario/dgt-en-cifras/matraba-listados/transacciones-automoviles-mensual.html"  # :contentReference[oaicite:9]{index=9}
+# =========================
+#   LOGGING + TIMERS
+# =========================
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO"),
+    format="%(asctime)s | %(levelname)s | %(message)s",
+)
+logger = logging.getLogger("automatizacion_dgt")
 
-# -------- Utils Drive --------
+def tic():
+    return time.perf_counter()
+
+def lap(t0: float, msg: str):
+    logger.info(f"{msg} | {time.perf_counter() - t0:.1f}s")
+
+
+# =========================
+#   CONSTANTES
+# =========================
+URL_DGT = (
+    "https://www.dgt.es/menusecundario/dgt-en-cifras/matraba-listados/transacciones-automoviles-mensual.html"
+)
+
+
+# =========================
+#   DRIVE HELPERS
+# =========================
 def get_drive():
     return authenticate_drive()
 
 def list_parquets_in_folder(service, folder_id: str) -> Dict[str, str]:
     """Devuelve {yyyymm: fileId} para los .parquet en la carpeta."""
     q = f"'{folder_id}' in parents and mimeType!='application/vnd.google-apps.folder' and trashed=false"
-    files = []
+    meses: Dict[str, str] = {}
     page_token = None
     while True:
-        resp = service.files().list(q=q, fields="nextPageToken, files(id, name, mimeType)", pageToken=page_token).execute()
-        files.extend(resp.get("files", []))
+        resp = service.files().list(
+            q=q,
+            fields="nextPageToken, files(id, name, mimeType)",
+            pageToken=page_token
+        ).execute()
+        for f in resp.get("files", []):
+            name = f["name"]
+            if name.lower().endswith(".parquet"):
+                m = re.search(r"(20\d{2})(\d{2})", name)
+                if m:
+                    yyyymm = f"{m.group(1)}{m.group(2)}"
+                    meses[yyyymm] = f["id"]
         page_token = resp.get("nextPageToken")
         if not page_token:
             break
-
-    meses: Dict[str, str] = {}
-    for f in files:
-        name = f["name"]
-        if name.lower().endswith(".parquet"):
-            m = re.search(r"(20\d{2})(\d{2})", name)
-            if m:
-                yyyymm = f"{m.group(1)}{m.group(2)}"
-                meses[yyyymm] = f["id"]
     return meses
 
 def upload_parquet(service, folder_id: str, local_path: Path, target_name: str) -> str:
+    """
+    Subida robusta a Drive:
+    1) Varios intentos con backoff exponencial.
+    2) Re-crea MediaFileUpload en cada intento.
+    3) Primero resumable con chunksize fijo; si falla varias veces, fallback a simple upload.
+    """
     file_metadata = {"name": target_name, "parents": [folder_id]}
-    media = MediaFileUpload(str(local_path), mimetype="application/octet-stream", resumable=True)
-    created = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
-    return created["id"]
 
-# -------- DGT scraping --------
+    # Intentos totales (resumable) antes de probar simple upload
+    MAX_RESUMABLE_TRIES = 5
+    # Intentos para simple upload si lo anterior falla
+    MAX_SIMPLE_TRIES = 2
+    # Chunk de ~8 MB (puedes bajar a 5 MB si la red es inestable)
+    CHUNK_SIZE = 8 * 1024 * 1024
+
+    last_err: Optional[Exception] = None
+
+    # 1) Reintentos con upload RESUMABLE
+    for attempt in range(1, MAX_RESUMABLE_TRIES + 1):
+        try:
+            media = MediaFileUpload(
+                local_path.as_posix(),
+                mimetype="application/octet-stream",
+                resumable=True,
+                chunksize=CHUNK_SIZE,
+            )
+            req = service.files().create(
+                body=file_metadata, media_body=media, fields="id"
+            )
+            # num_retries aquí pide a googleapiclient reintentar internamente
+            created = req.execute(num_retries=3)
+            return created["id"]
+        except HttpError as e:
+            last_err = e
+            wait = min(30, 2 ** attempt)  # backoff exponencial con tope
+            # Log claro con intento/tipo de subida
+            logger.warning(f"[Drive resumable] intento {attempt}/{MAX_RESUMABLE_TRIES} falló: {e}\nReintentando en {wait}s…")
+            time.sleep(wait)
+        except Exception as e:
+            last_err = e
+            wait = min(30, 2 ** attempt)
+            logger.warning(f"[Drive resumable] intento {attempt}/{MAX_RESUMABLE_TRIES} falló (no-HttpError): {e}\nReintentando en {wait}s…")
+            time.sleep(wait)
+
+    # 2) Fallback: SIMPLE UPLOAD (sin resumable), algunos entornos/proxys van mejor así
+    for attempt in range(1, MAX_SIMPLE_TRIES + 1):
+        try:
+            media = MediaFileUpload(
+                local_path.as_posix(),
+                mimetype="application/octet-stream",
+                resumable=False,
+            )
+            created = service.files().create(
+                body=file_metadata, media_body=media, fields="id"
+            ).execute(num_retries=3)
+            logger.info("[Drive simple] subida OK (fallback).")
+            return created["id"]
+        except Exception as e:
+            last_err = e
+            wait = 3 * attempt
+            logger.warning(f"[Drive simple] intento {attempt}/{MAX_SIMPLE_TRIES} falló: {e}\nReintentando en {wait}s…")
+            time.sleep(wait)
+
+    # Si llegamos aquí, fallaron todas las vías
+    raise RuntimeError(f"Fallo subiendo {target_name} a Drive tras reintentos: {last_err}")
+
+
+# =========================
+#   DGT SCRAPING
+# =========================
 def list_dgt_zip_urls() -> Dict[str, str]:
     """Devuelve {yyyymm: url_zip} desde la página de DGT."""
     r = requests.get(URL_DGT, timeout=60)
@@ -64,19 +158,39 @@ def list_dgt_zip_urls() -> Dict[str, str]:
             out[yyyymm] = u
     return out
 
-# -------- Normalización (normalizacionv2) --------
-def run_normalizacionv2_over_parquet(parquet_path: Path, normalizador_path: Path, whitelist_path: Path) -> None:
+
+# =========================
+#   NORMALIZACIÓN v2 (bridge)
+# =========================
+def run_normalizacionv2_over_parquet(
+    parquet_path: Path,
+    normalizador_path: Path,
+    whitelist_path: Path,
+    weights_env_var: str = "NORMALIZADOR_WEIGHTS_PATH",
+    cols_minimas_para_normalizador: Optional[List[str]] = None,
+) -> None:
     """
-    Bridge: parquet -> tmp csv -> normalizacionv2 (xlsx) -> merge columnas -> parquet (overwrite).
-    No deja residuos; no conserva CSV ni XLSX.
+    Bridge parquet -> tmp CSV -> normalizacionv2 (XLSX) -> merge columnas -> parquet (overwrite).
+    Exporta sólo las columnas que necesita el normalizador para ahorrar IO.
     """
-    import subprocess, tempfile
+    import subprocess
+
+    if cols_minimas_para_normalizador is None:
+        cols_minimas_para_normalizador = ["marca", "submodelo"]
+
     df_orig = pd.read_parquet(parquet_path)
 
     with tempfile.TemporaryDirectory() as td:
         tmp_csv = Path(td) / (parquet_path.stem + ".csv")
         out_xlsx = Path(td) / (parquet_path.stem + "_norm.xlsx")
-        df_orig.to_csv(tmp_csv, index=False)
+
+        # Exporta sólo columnas necesarias; si faltan, crea vacías
+        export_cols = [c for c in cols_minimas_para_normalizador if c in df_orig.columns]
+        for c in cols_minimas_para_normalizador:
+            if c not in export_cols:
+                df_orig[c] = None
+                export_cols.append(c)
+        df_orig[export_cols].to_csv(tmp_csv, index=False)
 
         cmd = [
             "python", str(normalizador_path),
@@ -86,48 +200,61 @@ def run_normalizacionv2_over_parquet(parquet_path: Path, normalizador_path: Path
             "--model-col", "submodelo",
             "--out", str(out_xlsx),
         ]
-        weights = os.environ.get("NORMALIZADOR_WEIGHTS_PATH")
+        weights = os.environ.get(weights_env_var)
         if weights:
+            # Ajusta el flag si tu normalizador usa otro (--model, --weights-path, etc.)
             cmd += ["--weights", str(weights)]
+
         res = subprocess.run(cmd, capture_output=True, text=True)
         if res.returncode != 0 or not out_xlsx.exists():
-            raise RuntimeError(f"normalizacionv2 falló.\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}")
+            raise RuntimeError(
+                "normalizacionv2 falló.\n"
+                f"CMD: {' '.join(cmd)}\nSTDOUT:\n{res.stdout}\nSTDERR:\n{res.stderr}"
+            )
 
         df_norm = pd.read_excel(out_xlsx)
-        # columnas típicas a inyectar (ajústalo si tu normalizador añade otras)
-        for col in ["modelo_base", "make_clean", "modelo_detectado", "MARCA", "MODELO"]:
+
+        # Inyecta columnas típicas del normalizador si existen
+        columnas_a_inyectar = [
+            "modelo_base", "make_clean", "modelo_detectado", "MARCA", "MODELO"
+        ]
+        for col in columnas_a_inyectar:
             if col in df_norm.columns:
                 df_orig[col] = df_norm[col]
 
     df_orig.to_parquet(parquet_path, index=False)
 
-# -------- Main pipeline --------
+
+# =========================
+#   MAIN PIPELINE
+# =========================
 def main():
     folder_id = os.environ["DGT_PARQUET_FOLDER_ID"]  # secret
-    normalizador = os.environ.get("NORMALIZADOR_DGT_PATH", "normalizacionv2.py")
-    whitelist = os.environ.get("NORMALIZADOR_WHITELIST_PATH", "whitelist.xlsx")
+    normalizador = Path(os.environ.get("NORMALIZADOR_DGT_PATH", "normalizacionv2.py"))
+    whitelist = Path(os.environ.get("NORMALIZADOR_WHITELIST_PATH", "whitelist.xlsx"))
 
-    if not Path(normalizador).exists():
+    if not normalizador.exists():
         raise FileNotFoundError(f"No encuentro normalizador: {normalizador}")
-    if not Path(whitelist).exists():
+    if not whitelist.exists():
         raise FileNotFoundError(f"No encuentro whitelist: {whitelist}")
 
+    t0 = tic()
     service = get_drive()
+    lap(t0, "Autenticación Drive lista")
 
-    # 1) Inventario Drive
-    ya_subidos = list_parquets_in_folder(service, folder_id)   # {yyyymm: fileId}
+    t = tic()
+    ya_subidos = list_parquets_in_folder(service, folder_id)
+    lap(t, f"Inventario Drive OK ({len(ya_subidos)} meses)")
 
-    # 2) Catálogo DGT online
-    disponibles = list_dgt_zip_urls()                          # {yyyymm: url_zip}
+    t = tic()
+    disponibles = list_dgt_zip_urls()
+    lap(t, f"Listado DGT OK ({len(disponibles)} meses detectados)")
 
-    # 3) Determinar pendientes
     pendientes = sorted([ym for ym in disponibles.keys() if ym not in ya_subidos])
-
     if not pendientes:
-        print("No hay meses nuevos.")
+        logger.info("No hay meses nuevos.")
         return
 
-    # 4) Descarga + extracción + parse + normalización + upload
     workdir = Path("dgt_work")
     workdir.mkdir(exist_ok=True)
 
@@ -136,45 +263,67 @@ def main():
         zip_name = f"dgt_{yyyymm}.zip"
         zip_path = workdir / zip_name
 
-        print(f"Descargando {zip_name} ...")
+        t = tic()
+        logger.info(f"Descargando {zip_name} ...")
         with requests.get(url, stream=True, timeout=120) as r:
             r.raise_for_status()
             with open(zip_path, "wb") as f:
                 for chunk in r.iter_content(chunk_size=1 << 20):
-                    if chunk: f.write(chunk)
+                    if chunk:
+                        f.write(chunk)
+        lap(t, f"Descarga ZIP {zip_name} completada")
 
+        t = tic()
         with zipfile.ZipFile(zip_path, "r") as zf:
             zf.extractall(workdir)
+        lap(t, f"Extracción ZIP {zip_name} completada")
 
-        # Encontrar .txt (puede haber subcarpetas)
+        # Buscar TXT en subcarpetas
         txts = [p for p in workdir.rglob("*.txt")]
         if not txts:
-            print(f"⚠️ No se encontraron TXT en {zip_name}")
+            logger.warning(f"⚠️ No se encontraron TXT en {zip_name}")
             continue
 
-        # Por cada .txt -> parquet (puedes también concatenar si DGT parte el mes)
         for txt in txts:
-            out_parquet = workdir / (re.sub(r"\.txt$", ".parquet", txt.name, flags=re.I))
-            txt_to_parquet(txt, out_parquet)  # Parquet base sin normalización
-
-            # Normalización v2 sobre el Parquet
-            run_normalizacionv2_over_parquet(out_parquet, Path(normalizador), Path(whitelist))
-
-            # Nombre final consistente: dgt_transmisiones_YYYMM.parquet
+            # Nombre final consistente por mes (si hay varios txt, puedes distinguirlos si quieres)
             target_name = f"dgt_transmisiones_{yyyymm}.parquet"
-            print(f"Subiendo {target_name} a Drive...")
-            upload_parquet(service, folder_id, out_parquet, target_name)
+            out_parquet = workdir / (re.sub(r"\.txt$", ".parquet", txt.name, flags=re.I))
 
-        # Limpieza de residuos del zip actual
+            # 1) TXT -> Parquet (streaming + PyArrow)
+            t = tic()
+            txt_to_parquet(txt, out_parquet, chunk_rows=50_000)
+            lap(t, f"TXT→Parquet ({txt.name})")
+
+            # 2) Normalizacion v2 (bridge CSV->XLSX->merge)
+            t = tic()
+            run_normalizacionv2_over_parquet(out_parquet, normalizador, whitelist)
+            lap(t, f"normalizacionv2 ({txt.name})")
+
+            # 3) Subir a Drive
+            t = tic()
+            logger.info(f"Subiendo {target_name} a Drive...")
+            upload_parquet(service, folder_id, out_parquet, target_name)
+            lap(t, f"Upload a Drive ({target_name})")
+
+        # Limpieza de residuos del ZIP actual (opcional)
         for p in workdir.iterdir():
             if p.is_file() and p.suffix.lower() in {".zip", ".txt", ".parquet"}:
-                p.unlink()
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
             elif p.is_dir():
-                # cuidado de no borrar workdir
                 for q in p.rglob("*"):
-                    if q.is_file(): q.unlink()
-                try: p.rmdir()
-                except OSError: pass
+                    if q.is_file():
+                        try:
+                            q.unlink()
+                        except OSError:
+                            pass
+                try:
+                    p.rmdir()
+                except OSError:
+                    pass
+
 
 if __name__ == "__main__":
     main()
