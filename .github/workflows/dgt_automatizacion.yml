@@ -12,7 +12,6 @@ jobs:
     env:
       GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64 }}
       DGT_PARQUET_FOLDER_ID: ${{ secrets.DGT_PARQUET_FOLDER_ID }}
-      # Opcional si tus rutas no están en repo root:
       NORMALIZADOR_DGT_PATH: normalizacionv2.py
       NORMALIZADOR_WHITELIST_PATH: whitelist.xlsx
       NORMALIZADOR_WEIGHTS_PATH: weights.json
@@ -31,8 +30,12 @@ jobs:
           pip install pandas pyarrow google-api-python-client google-auth-httplib2 google-auth-oauthlib requests beautifulsoup4 openpyxl
 
       - name: Run DGT automation
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64 }}
+          DGT_PARQUET_FOLDER_ID: ${{ secrets.DGT_PARQUET_FOLDER_ID }}
+          NORMALIZADOR_DGT_PATH: normalizacionv2.py
+          NORMALIZADOR_WHITELIST_PATH: whitelist.xlsx
+          NORMALIZADOR_WEIGHTS_PATH: weights.json
         run: |
-          python - << 'PY'
-          import runpy
-          runpy.run_path("scripts/DGT/automatizacion_dgt.py", run_name="__main__")
-          PY
+          python -m scripts.DGT.automatizacion_dgt
