@@ -1,0 +1,38 @@
+name: Automatización DGT
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 06:00 Europe/Madrid -> usa UTC en Actions; Madrid normalmente UTC+1/+2
+    - cron: "0 5 1,15 * *"  # ajusta si quieres otra hora
+
+jobs:
+  dgt:
+    runs-on: ubuntu-latest
+    env:
+      GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64 }}
+      DGT_PARQUET_FOLDER_ID: ${{ secrets.DGT_PARQUET_FOLDER_ID }}
+      # Opcional si tus rutas no están en repo root:
+      NORMALIZADOR_DGT_PATH: normalizacionv2.py
+      NORMALIZADOR_WHITELIST_PATH: whitelist.xlsx
+      NORMALIZADOR_WEIGHTS_PATH: weights.json
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas pyarrow google-api-python-client google-auth-httplib2 google-auth-oauthlib requests beautifulsoup4 openpyxl
+
+      - name: Run DGT automation
+        run: |
+          python - << 'PY'
+          import runpy
+          runpy.run_path("scripts/dgt/automatizacion_dgt.py", run_name="__main__")
+          PY
