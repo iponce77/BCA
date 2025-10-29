@@ -34,5 +34,5 @@ jobs:
         run: |
           python - << 'PY'
           import runpy
-          runpy.run_path("scripts/dgt/automatizacion_dgt.py", run_name="__main__")
+          runpy.run_path("scripts/DGT/automatizacion_dgt.py", run_name="__main__")
           PY
