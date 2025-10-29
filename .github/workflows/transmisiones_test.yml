@@ -85,7 +85,7 @@ jobs:
           print(f"✅ Descargado {TARGET_NAME} → {OUT}")
           PY
 
-      - name: Download last N resultado_mensual_trf_YYYYMM.parquet (DGT_PARQUET_FOLDER_ID)
+      - name: Download last N dgt_transmisiones_*.parquet (DGT_PARQUET_FOLDER_ID)
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
@@ -101,7 +101,7 @@ jobs:
           N = int(os.environ.get("INPUT_MONTHS") or "12")
           LATEST = os.environ.get("INPUT_LATEST_YYYYMM") or ""
 
-          pat = re.compile(r"^resultado_mensual_trf_(\d{6})\.parquet$", re.I)
+          pat = re.compile(r"^(?:resultado_mensual_trf|dgt_transmisiones)_(\d{6})\.parquet$", re.I)
           svc = authenticate_drive()
 
           resp = svc.files().list(
@@ -163,3 +163,4 @@ jobs:
           python scripts/upload_monthly.py \
             --folder "$BCA_MONTHLY_FOLDER_ID" \
             --files "salida/agg_transmisiones.parquet,salida/agg_transmisiones_ine.parquet"
+
