@@ -12,7 +12,7 @@ from googleapiclient.errors import HttpError
 # 1) Autenticación Drive (reutiliza helper del repo)
 from gdrive_auth import authenticate_drive  # usa GOOGLE_OAUTH_B64 + scope drive.file
 # 2) Parser -> Parquet
-from scripts.dgt.parse_dgt import txt_to_parquet
+from scripts.DGT.parse_dgt import txt_to_parquet
 
 URL_DGT = "https://www.dgt.es/menusecundario/dgt-en-cifras/matraba-listados/transacciones-automoviles-mensual.html"  # :contentReference[oaicite:9]{index=9}
 
