@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-import os, sys
+import os
+import sys
+import re
 from glob import glob
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
@@ -26,7 +28,6 @@ def upload_or_update(service, folder_id: str, file_path: str):
         raise FileNotFoundError(file_path)
 
     name = os.path.basename(file_path)
-    # sugerimos mimetype para .xlsx (opcional)
     mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if name.lower().endswith(".xlsx") else None
     media = MediaFileUpload(file_path, mimetype=mime, resumable=True)
 
@@ -40,16 +41,45 @@ def upload_or_update(service, folder_id: str, file_path: str):
             service.files().create(body=body, media_body=media, fields="id").execute()
             print(f"⬆️ Subido a Drive: {name}")
     except HttpError as e:
-        print(f"❌ Error subiendo {name}: {e}", file=sys.stderr)
-        sys.exit(1)
+        print(f"❌ Error subiendo {name}: {e}")
+        raise
+
+def trash_base_files(service, folder_id: str, completo_name: str):
+    """
+    Busca y mueve a la papelera los ficheros 'base' (mismo prefijo fecha) que NO contienen '_completo'.
+    """
+    m = re.search(r"(fichas_vehiculos_[0-9]{8})", completo_name)
+    if not m:
+        print("⚠️ No se detectó patrón 'fichas_vehiculos_YYYYMMDD' en el nombre; no se borrará nada.")
+        return
+    date_prefix = m.group(1)
+
+    # construimos query: en la carpeta, no en papeleras, que contengan la fecha y NO contengan "_completo"
+    q = " and ".join([
+        f"'{folder_id}' in parents",
+        "trashed = false",
+        f"name contains '{date_prefix}'",
+        "not name contains '_completo'"
+    ])
+
+    resp = service.files().list(q=q, fields="files(id,name)", pageSize=1000,
+                               includeItemsFromAllDrives=True, supportsAllDrives=True).execute()
+    files = resp.get("files", [])
+    if not files:
+        print("ℹ️ No se encontraron ficheros base a mover a la papelera.")
+        return
+
+    for f in files:
+        fid = f["id"]
+        fname = f["name"]
+        try:
+            # Preferimos 'mover a la papelera' en vez de borrar permanentemente
+            service.files().update(fileId=fid, body={"trashed": True}).execute()
+            print(f"🗑️ Movido a la papelera en Drive: {fname}")
+        except HttpError as e:
+            print(f"❌ Error moviendo a papelera {fname}: {e}", file=sys.stderr)
 
 def pick_completo() -> str | None:
-    """
-    Selecciona el archivo final a subir:
-      1) Si EXCEL_FINAL (env) existe, usarlo.
-      2) Buscar *_completo.xlsx en el directorio actual.
-      3) Buscar out/*_completo.xlsx.
-    """
     excel_final = os.environ.get("EXCEL_FINAL", "").strip()
     if excel_final and os.path.exists(excel_final):
         return excel_final
@@ -73,5 +103,22 @@ def main():
         sys.exit(1)
     upload_or_update(service, folder_id, target)
 
+    # ---- NUEVO: tras subir correctamente, mover a la papelera los ficheros de fase 1 (si procede) ----
+    # Si VAR de entorno KEEP_BASE_FILES es '1'/'true' no borramos (por seguridad)
+    keep = os.environ.get("KEEP_BASE_FILES", "").lower()
+    if keep in ("1", "true", "yes"):
+        print("ℹ️ KEEP_BASE_FILES activado: no se moverán a la papelera los ficheros base.")
+        return
+
+    if "_completo" in os.path.basename(target):
+        try:
+            trash_base_files(service, folder_id, os.path.basename(target))
+        except Exception as e:
+            print(f"⚠️ Error durante el borrado de ficheros base: {e}", file=sys.stderr)
+    else:
+        print("ℹ️ El fichero subido no contiene '_completo' en su nombre; no se borrará nada por seguridad.")
+
 if __name__ == "__main__":
     main()
+
+
