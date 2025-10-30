@@ -14,7 +14,7 @@ concurrency:
 jobs:
   monthly:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 240
     env:
       BCA_RESULTS_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
       BCA_MONTHLY_FOLDER_ID: ${{ secrets.BCA_MONTHLY_FOLDER_ID }}
