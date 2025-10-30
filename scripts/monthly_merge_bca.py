@@ -18,7 +18,6 @@ Uso:
     --whitelist whitelist.xlsx \
     --pattern "*_completo.xlsx"     # (opcional, por defecto)
 """
-
 import argparse
 import re
 from pathlib import Path
@@ -123,6 +122,35 @@ def main():
 
     out_path = Path(args.out)
     out_parquet = out_path if out_path.suffix.lower() == ".parquet" else out_path.with_suffix(".parquet")
+
+    # --- Robustness: coerce object-like columns to text to avoid pyarrow errors ---
+    # (QUIRÚRGICO: añadido justo antes de escribir el parquet; no cambia la lógica)
+    import json
+
+    def _coerce_obj_cell(v):
+        # Bytes -> str (utf-8 fallback latin1)
+        if isinstance(v, (bytes, bytearray)):
+            try:
+                return v.decode('utf-8')
+            except Exception:
+                return v.decode('latin-1', errors='ignore')
+        # dict/list -> json string
+        if isinstance(v, (dict, list)):
+            try:
+                return json.dumps(v, ensure_ascii=False)
+            except Exception:
+                return str(v)
+        # None/NaN -> empty string
+        if pd.isna(v):
+            return ""
+        return str(v)
+
+    for col in merged.select_dtypes(include=['object']).columns:
+        types = merged[col].dropna().map(type).value_counts()
+        if len(types) > 1:
+            print(f"⚠️ Column '{col}' has mixed types: {types.to_dict()}; coercing to text.")
+        merged[col] = merged[col].map(_coerce_obj_cell)
+    # --- fin robustness ---
 
     # ✅ Guardar en Parquet (formato oficial)
     merged.to_parquet(out_parquet, index=False)
