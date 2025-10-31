@@ -178,7 +178,7 @@ def process_all(args):
             default_fuel = REPO_ROOT / "mappings/fuels.json"
             args.fuel_json = str(default_fuel) if default_fuel.exists() else None
         if args.whitelist_xlsx is None:
-            default_wl = REPO_ROOT / "whitelists/whitelist_marcas.xlsx"
+            default_wl = REPO_ROOT / "whitelist.xlsx"
             args.whitelist_xlsx = str(default_wl) if default_wl.exists() else None
     except Exception:
         pass
@@ -333,3 +333,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
