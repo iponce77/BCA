@@ -2,93 +2,61 @@
 
 ## 1. Objetivo
 
-Este proyecto procesa los **archivos de transmisiones de la DGT** en formato CSV/ZIP (`resultado_mensual_trf_YYYYMM.csv.gz`) para generar un análisis de mercado de los vehículos transmitidos en España.
+Este proyecto procesa los **archivos de transmisiones de la DGT** para generar un análisis de mercado de los vehículos transmitidos en España y producir agregados que luego se usan para enriquecer la base BCA.
 
-El análisis es la base para el **enriquecimiento de la base de datos BCA**: a través de los agregados que genera este pipeline (`agg_transmisiones.csv` y `agg_transmisiones_ine.csv`) se podrán asignar indicadores de atractivo o relevancia de mercado a los vehículos de BCA.
+**Formato de entrada recomendado:** `.parquet` (se admiten también `.csv`, `.csv.gz` o `.zip` con CSVs).  
+**Formato de salida oficial:** **`.parquet`** (`agg_transmisiones.parquet`, `agg_transmisiones_ine.parquet`, etc.).
 
 ---
 
 ## 2. Qué hace el proyecto
 
 1. **Carga de datos DGT**  
-   - Lectura de ficheros `.csv`, `.csv.gz` o `.zip` con múltiples CSV.  
-   - Soporte para múltiples meses (rolling windows de 12, 24 meses o corte YTD).  
+   - Lectura de ficheros `.parquet`, `.csv`, `.csv.gz` o `.zip` con múltiples CSV.  
+   - Soporte para múltiples meses (ventanas rolling de N meses o corte anual).
 
 2. **Normalización y limpieza**  
-   - Columnas: `marca`, `modelo`, `modelo_base`, `modelo_normalizado`, `make_clean`.  
-   - Normalización de combustible y marcas con diccionarios (`mappings_loader`).  
-   - Limpieza de VIN, fechas, antigüedad y codificación.  
+   - Columnas resultantes: `marca`, `modelo`, `modelo_base`, `modelo_normalizado`, `make_clean`.  
+   - Normalización de marcas y combustibles con diccionarios (`mappings_loader`).  
+   - Limpieza de VIN, fechas, antigüedad y codificación.
 
 3. **Normalización de INE (municipios)**  
-   - Si el código viene como `28065.0` → se transforma en `28065`.  
-   - Si tiene 4 dígitos (ej. `4561`) → se completa con un `0` delante (`04561`).  
-   - Si no es numérico → se descarta (`null`).  
-   - Se usa **exclusivamente el campo `codigo_ine`** (no `localidad`, ya que no siempre es fiable).  
+   - Normaliza `codigo_ine` (p. ej. `28065.0` → `28065`, `4561` → `04561`).  
+   - Se usa exclusivamente `codigo_ine` (no `localidad`) para agregados a nivel municipio.
 
 4. **Agregación**  
-   - **Por provincia (`agg_transmisiones.csv`)**  
-     Incluye métricas de unidades, antigüedad media, percentiles, YoY y shares (%).  
-   - **Por municipio (`agg_transmisiones_ine.csv`)**  
-     Incluye métricas similares pero con clave `codigo_ine`.  
+   - **Por provincia (`agg_transmisiones.parquet`)**: `marca_normalizada`, `modelo_normalizado`, `anio`, `combustible`, `provincia`, `codigo_provincia`, `yyyymm` + métricas (`unidades`, `antiguedad_media`, percentiles, YoY, shares, etc.).  
+   - **Por municipio / INE (`agg_transmisiones_ine.parquet`)**: claves `marca_normalizada`, `modelo_normalizado`, `anio`, `combustible`, `codigo_ine`, `yyyymm` + métricas similares.
 
 5. **Exportación**  
-   - Resultados en **CSV y Parquet**.  
-   - Generación de snapshots por periodos: 12 meses, 24 meses, YTD.  
+   - Resultados oficiales en **Parquet**. (Históricamente hubo CSVs; el pipeline produce Parquet oficialmente).  
+   - Generación de snapshots por periodos: 12m, 24m y YTD cuando corresponde.
 
 ---
 
-## 3. Estructura de salida
+## 3. Convenciones de nombres DGT
 
-### `agg_transmisiones.csv` (nivel provincia)
-- Claves: `marca_normalizada`, `modelo_normalizado`, `anio`, `combustible`, `provincia`, `codigo_provincia`, `yyyymm`.
-- Métricas:  
-  - `unidades`, `antiguedad_media`, `p25_antiguedad`, `p50_antiguedad`, `p75_antiguedad`  
-  - `%_0_3`, `%_4_7`, `%_8_mas`  
-  - `unidades_prev`, `YoY_unidades_%`, `share_prov_%`, `share_esp_%`
+El pipeline infiere el `YYY YMM` (yyyymm) a partir del **nombre del fichero**. Se admiten los dos esquemas más usados:
 
-### `agg_transmisiones_ine.csv` (nivel municipio / INE)
-- Claves: `marca_normalizada`, `modelo_normalizado`, `anio`, `combustible`, `codigo_ine`, `yyyymm`.
-- Métricas:  
-  - `unidades`, `antiguedad_media`, `p25_antiguedad`, `p50_antiguedad`, `p75_antiguedad`  
-  - `%_0_3`, `%_4_7`, `%_8_mas`
+- `resultado_mensual_trf_YYYYMM.parquet`  
+- `dgt_transmisiones_YYYYMM.parquet`
+
+Además, cualquier fichero cuyo nombre contenga una secuencia `YYYYMM` será aceptado (p. ej. `foo_202406_bar.parquet`).
+
+La columna `transmision` se rellena con `YYYY-MM` inferido a partir del nombre del fichero cuando procede.
 
 ---
 
-## 4. Ejecución en local
+## 4. Recursos y normalizador
 
-### Comando básico
-```powershell
-python etl_transmisiones.py --input-dir "entrada_dgt" --out-dir "salida" --mode rolling --months 12
-```
-
-### Parámetros principales
-- `--input-dir` → Carpeta con los CSV originales de la DGT.  
-- `--out-dir` → Carpeta donde se guardan los resultados.  
-- `--mode` →  
-  - `rolling` → genera salidas de 12m, 24m y YTD.  
-  - `single` → genera solo un corte específico.  
-- `--months` → Número de meses para ventana rolling (ej. 12, 24).  
-
-### Ejemplo extendido
-```powershell
-python etl_transmisiones.py --input-dir "entrada_dgt" --out-dir "salida" --mode rolling --months 24
-```
-
-Esto genera:
-- `salida/agg_transmisiones.csv`  
-- `salida/agg_transmisiones_ine.csv`  
-- `salida/snapshots/12m/`  
-- `salida/snapshots/24m/`  
-- `salida/snapshots/ytd/`
+- El **normalizador** utilizado para enriquecer DGT está en la raíz: `normalizacionv2.py` (por compatibilidad con la automatización).  
+- La **whitelist** por defecto ahora está en la raíz: `whitelist.xlsx` (si tienes otra ubicación, pásala con `--whitelist-xlsx`).  
+- Los **pesos** para el normalizador (opcional) están en la raíz como `weights.json`. El proceso de automatización (`scripts/DGT/automatizacion_dgt.py`) usa `NORMALIZADOR_WEIGHTS_PATH` si está definido, y si no, intenta usar `weights.json` en la raíz como fallback.
 
 ---
 
-## 5. Integración con BCA
+## 5. Ejecución en local
 
-El **punto de unión** con la base de datos de BCA será el archivo `agg_transmisiones.csv` (y en algunos casos también `agg_transmisiones_ine.csv`).
-
-Ejemplo de uso:
-- Tengo un **SEAT León gasolina de 2023 en Terrassa**.  
-- Si existe el mismo segmento en `agg_transmisiones_ine.csv` (con INE de Terrassa), se asigna puntuación con granularidad municipal.  
-- Si no existe a ese nivel, se puede usar `agg_transmisiones.csv` (provincia) o niveles más generales (modelo sin combustible).  
-- El campo clave para enlazar es `marca_normalizada + modelo_base/modelo_normalizado + anio + combustible`.  
+### Comando básico (rolling)
+```bash
+python "union transmisiones/etl_transmisiones.py" --input-dir "entrada_dgt" --out-dir "salida" --mode rolling --months 12
