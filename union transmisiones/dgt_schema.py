@@ -189,17 +189,39 @@ def standardize_lazyframe(lf: pl.LazyFrame, yyyymm_hint: int | None, brands_map:
         )
 
     # PRIORIDAD: modelo_base > modelo_normalizado (existente) > modelo
-    trimmed_modelo_base = norm_upper(pl.col("modelo_base"))
-    trimmed_modelo_norm = norm_upper(pl.col("modelo_normalizado"))
-
-    lf = lf.with_columns(
-        pl.when(pl.col("modelo_base").is_not_null() & (trimmed_modelo_base.str.len_chars() > 0))
-          .then(pl.col("modelo_base").cast(pl.Utf8))
-          .when(pl.col("modelo_normalizado").is_not_null() & (trimmed_modelo_norm.str.len_chars() > 0))
-          .then(pl.col("modelo_normalizado").cast(pl.Utf8))
-          .otherwise(norm_upper(pl.col("modelo")))
-          .alias("modelo_normalizado")
-    )
+    names = lf.collect_schema().names()
+    if "modelo_base" in names:
+        # Si existe modelo_base en el esquema, priorizamos su uso (cuando aporte texto)
+        trimmed_modelo_base = norm_upper(pl.col("modelo_base"))
+        if "modelo_normalizado" in names:
+            trimmed_modelo_norm = norm_upper(pl.col("modelo_normalizado"))
+            lf = lf.with_columns(
+                pl.when(pl.col("modelo_base").is_not_null() & (trimmed_modelo_base.str.len_chars() > 0))
+                  .then(pl.col("modelo_base").cast(pl.Utf8))
+                  .when(pl.col("modelo_normalizado").is_not_null() & (trimmed_modelo_norm.str.len_chars() > 0))
+                  .then(pl.col("modelo_normalizado").cast(pl.Utf8))
+                  .otherwise(pl.lit(None, dtype=pl.Utf8))
+                  .alias("modelo_normalizado")
+            )
+        else:
+            lf = lf.with_columns(
+                pl.when(pl.col("modelo_base").is_not_null() & (trimmed_modelo_base.str.len_chars() > 0))
+                  .then(pl.col("modelo_base").cast(pl.Utf8))
+                  .otherwise(pl.lit(None, dtype=pl.Utf8))
+                  .alias("modelo_normalizado")
+            )
+    elif "modelo_normalizado" in names:
+        # No hay modelo_base, pero ya existe modelo_normalizado: usarlo si aporta valor
+        trimmed_modelo_norm = norm_upper(pl.col("modelo_normalizado"))
+        lf = lf.with_columns(
+            pl.when(pl.col("modelo_normalizado").is_not_null() & (trimmed_modelo_norm.str.len_chars() > 0))
+              .then(pl.col("modelo_normalizado").cast(pl.Utf8))
+              .otherwise(pl.lit(None, dtype=pl.Utf8))
+              .alias("modelo_normalizado")
+        )
+    else:
+        lf = lf.with_columns(pl.lit(None, dtype=pl.Utf8).alias("modelo_normalizado"))
+   
 
     lf = lf.with_columns([
         pl.col("yyyymm").cast(pl.Int64, strict=False).alias("yyyymm"),
