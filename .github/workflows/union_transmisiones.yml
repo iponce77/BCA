@@ -16,11 +16,9 @@ jobs:
   union-transmisiones:
     runs-on: ubuntu-latest
     env:
-      # Secrets esperados (define estos secretos en tu repo/settings):
       BCA_MONTHLY_FOLDER_ID: ${{ secrets.BCA_MONTHLY_FOLDER_ID }}
       DGT_PARQUET_FOLDER_ID: ${{ secrets.DGT_PARQUET_FOLDER_ID }}
-      # OAuth para Google Drive (usar el mismo secret que tus otros workflows)
-      GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64_FULL || secrets.GOOGLE_OAUTH_B64 }}
+      GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64 }}
       GOOGLE_DRIVE_SCOPE: https://www.googleapis.com/auth/drive
     steps:
       - name: Checkout
