@@ -172,7 +172,7 @@ def process_all(args):
         from pathlib import Path
         REPO_ROOT = Path(__file__).resolve().parent.parent
         if args.mappings_file is None:
-            args.mappings_file = str(REPO_ROOT / "mappings/bca_mappings.yml")
+            args.mappings_file = str(REPO_ROOT / "union transmisiones" / "mappings" / "bca_mappings.yml")
         if args.fuel_json is None:
             # Prefer mappings/fuels.json (legacy). Si no existe, usar fuel_aliases.json en repo root.
             default_fuel = REPO_ROOT / "mappings/fuels.json"
@@ -335,5 +335,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
