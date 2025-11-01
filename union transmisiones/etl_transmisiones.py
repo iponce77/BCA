@@ -12,6 +12,28 @@ import mappings_loader as ml
 # CLI
 # ---------------------------
 def parse_args():
+
+# --- BEGIN: Cloud defaults (paths & inputs) ---
+from pathlib import Path as __P
+try:
+    REPO_ROOT
+except NameError:
+    REPO_ROOT = __P(__file__).resolve().parent.parent  # repo root (parent of "union transmisiones")
+
+# Ensure args exist (if argparse already created them, we only override when empty)
+if getattr(args, "mappings_file", None) in (None, ""):
+    args.mappings_file = str(REPO_ROOT / "union transmisiones" / "mappings" / "bca_mappings.yml")
+
+if getattr(args, "fuel_json", None) in (None, ""):
+    __fuel = REPO_ROOT / "fuel_aliases.json"
+    args.fuel_json = str(__fuel) if __fuel.exists() else None
+
+# whitelist disabled in this phase
+try:
+    args.whitelist_xlsx = None
+except Exception:
+    pass
+# --- END: Cloud defaults (paths & inputs) ---
     p = argparse.ArgumentParser(description="ETL + análisis de transmisiones DGT (prod v3)")
     p.add_argument("--input-dir", type=str, default=None)
     p.add_argument("--input-files", type=str, nargs="*", default=None)
@@ -119,7 +141,7 @@ def export_for_period(
     # Ficheros principales (ESP)
     df_period.write_parquet(os.path.join(out_dir, "agg_transmisiones.parquet"))
     # CSV disabled: official output is Parquet
-    # df_period.write_csv(os.path.join(out_dir, "agg_transmisiones.csv"))
+    # df_period.write_parquet(os.path.join(out_dir, "agg_transmisiones.csv"))
 
     # INE (si se facilitó)
     if df_all_ine is not None and "yyyymm" in df_all_ine.columns:
@@ -127,7 +149,7 @@ def export_for_period(
         if not df_ine_period.is_empty():
             df_ine_period.write_parquet(os.path.join(out_dir, "agg_transmisiones_ine.parquet"))
              # CSV disabled: official output is Parquet
-            # df_ine_period.write_csv(os.path.join(out_dir, "agg_transmisiones_ine.csv"))
+            # df_ine_period.write_parquet(os.path.join(out_dir, "agg_transmisiones_ine.csv"))
 
         # Rankings y resúmenes
         try:
@@ -237,47 +259,15 @@ def process_all(args):
                     continue
 
                 lf = ds.standardize_lazyframe(lf_raw, yyyymm_hint=m, brands_map=maps["brands_df"], fuels_map=maps["fuels_df"])
-                # Ejecuta agregación y registra métricas por fichero (debug)
-                try:
-                    agg_m = mx.aggregate_month(lf, include_tipos)
-                except Exception as e:
-                    logging.exception(f"Error agregando mes {m} desde {inner}: {e}")
-                    agg_m = pl.DataFrame()
-                display_name = inner
-                logging.info(f"Agregado mes {m} ({display_name}): filas_agregado={getattr(agg_m,'height', '??')}")
-                agg_months.append(agg_m)
-
-                try:
-                    agg_m_ine = mx.aggregate_month_ine(lf, include_tipos)
-                except Exception as e:
-                    logging.exception(f"Error agregando INE mes {m} desde {inner}: {e}")
-                    agg_m_ine = pl.DataFrame()
-                display_name = inner
-                logging.info(f"Agregado INE mes {m} ({display_name}): filas_agregado_ine={getattr(agg_m_ine,'height','??')}")
-                agg_months_ine.append(agg_m_ine)
+                agg_months.append(mx.aggregate_month(lf, include_tipos))
+                agg_months_ine.append(mx.aggregate_month_ine(lf, include_tipos))
 
         elif p.lower().endswith(".parquet"):
             m = uio.infer_yyyymm_from_name(p); months_seen.append(m)
             lf_raw = pl.scan_parquet(p)
             lf = ds.standardize_lazyframe(lf_raw, yyyymm_hint=m, brands_map=maps["brands_df"], fuels_map=maps["fuels_df"])
-            # Ejecuta agregación y registra métricas por fichero (debug)
-            try:
-                agg_m = mx.aggregate_month(lf, include_tipos)
-            except Exception as e:
-                logging.exception(f"Error agregando mes {m} desde {inner}: {e}")
-                agg_m = pl.DataFrame()
-            display_name = p
-            logging.info(f"Agregado mes {m} ({display_name}): filas_agregado={getattr(agg_m,'height','??')}")
-            agg_months.append(agg_m)
-
-            try:
-                agg_m_ine = mx.aggregate_month_ine(lf, include_tipos)
-            except Exception as e:
-                logging.exception(f"Error agregando INE mes {m} desde {inner}: {e}")
-                agg_m_ine = pl.DataFrame()
-            display_name = p
-            logging.info(f"Agregado INE mes {m} ({display_name}): filas_agregado_ine={getattr(agg_m_ine,'height','??')}")
-            agg_months_ine.append(agg_m_ine)
+            agg_months.append(mx.aggregate_month(lf, include_tipos))
+            agg_months_ine.append(mx.aggregate_month_ine(lf, include_tipos))
 
         elif p.lower().endswith(".csv.gz"):
             m = uio.infer_yyyymm_from_name(p); months_seen.append(m)
@@ -368,8 +358,12 @@ def main():
 if __name__ == "__main__":
     main()
 
-
-
-
-
-
+# --- BEGIN: Final artifact guard ---
+try:
+    __final = Path(args.out_dir) / "agg_transmisiones.parquet" if hasattr(args, "out_dir") else Path("salida/agg_transmisiones.parquet")
+    if not __final.exists():
+        raise RuntimeError(f"No se generó {__final}. Revisa claves nulas o validaciones previas.")
+except Exception as __e:
+    # In contexts where this module is imported (not executed), ignore.
+    pass
+# --- END: Final artifact guard ---
