@@ -243,7 +243,8 @@ def process_all(args):
                 except Exception as e:
                     logging.exception(f"Error agregando mes {m} desde {inner}: {e}")
                     agg_m = pl.DataFrame()
-                logging.info(f"Agregado mes {m} ({inner}): filas_agregado={getattr(agg_m,'height', '??')}")
+                display_name = inner
+                logging.info(f"Agregado mes {m} ({display_name}): filas_agregado={getattr(agg_m,'height', '??')}")
                 agg_months.append(agg_m)
 
                 try:
@@ -251,7 +252,8 @@ def process_all(args):
                 except Exception as e:
                     logging.exception(f"Error agregando INE mes {m} desde {inner}: {e}")
                     agg_m_ine = pl.DataFrame()
-                logging.info(f"Agregado INE mes {m} ({inner}): filas_agregado_ine={getattr(agg_m_ine,'height','??')}")
+                display_name = inner
+                logging.info(f"Agregado INE mes {m} ({display_name}): filas_agregado_ine={getattr(agg_m_ine,'height','??')}")
                 agg_months_ine.append(agg_m_ine)
 
         elif p.lower().endswith(".parquet"):
@@ -264,7 +266,8 @@ def process_all(args):
             except Exception as e:
                 logging.exception(f"Error agregando mes {m} desde {inner}: {e}")
                 agg_m = pl.DataFrame()
-            logging.info(f"Agregado mes {m} ({inner}): filas_agregado={getattr(agg_m,'height', '??')}")
+            display_name = p
+            logging.info(f"Agregado mes {m} ({display_name}): filas_agregado={getattr(agg_m,'height','??')}")
             agg_months.append(agg_m)
 
             try:
@@ -272,7 +275,8 @@ def process_all(args):
             except Exception as e:
                 logging.exception(f"Error agregando INE mes {m} desde {inner}: {e}")
                 agg_m_ine = pl.DataFrame()
-            logging.info(f"Agregado INE mes {m} ({inner}): filas_agregado_ine={getattr(agg_m_ine,'height','??')}")
+            display_name = p
+            logging.info(f"Agregado INE mes {m} ({display_name}): filas_agregado_ine={getattr(agg_m_ine,'height','??')}")
             agg_months_ine.append(agg_m_ine)
 
         elif p.lower().endswith(".csv.gz"):
@@ -363,6 +367,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
