@@ -239,3 +239,39 @@ def keep_tipos(lf: pl.LazyFrame, include: list[str]) -> pl.LazyFrame:
         tokens.append(u)
     pat = "(" + "|".join([re.escape(x) for x in tokens]) + ")"
     return lf.filter(pl.col("tipo_vehiculo_norm").is_null() | pl.col("tipo_vehiculo_norm").str.contains(pat))
+
+# --- BEGIN: Fallback priority for modelo_normalizado (cloud) ---
+# Priority:
+# 1) modelo_base (if non-empty)
+# 2) modelo_normalizado (if non-empty)
+# 3) FINAL FALLBACK: normalized raw 'modelo' (if non-empty)
+def __norm_upper(expr: pl.Expr) -> pl.Expr:
+    return (
+        pl.when(expr.is_not_null())
+        .then(expr.cast(pl.Utf8).str.strip_chars().str.normalize('NFKD').str.to_uppercase())
+        .otherwise(expr)
+    )
+
+__names = set(lf.columns)
+
+__has_base = (pl.col("modelo_base").is_not_null() & (__norm_upper(pl.col("modelo_base")).str.len_chars() > 0)) if "modelo_base" in __names else pl.lit(False)
+__has_norm = (pl.col("modelo_normalizado").is_not_null() & (__norm_upper(pl.col("modelo_normalizado")).str.len_chars() > 0)) if "modelo_normalizado" in __names else pl.lit(False)
+__has_raw  = (pl.col("modelo").is_not_null() & (__norm_upper(pl.col("modelo")).str.len_chars() > 0)) if "modelo" in __names else pl.lit(False)
+
+lf = lf.with_columns(
+    pl.when(__has_base).then(pl.col("modelo_base").cast(pl.Utf8))
+     .when(__has_norm).then(pl.col("modelo_normalizado").cast(pl.Utf8))
+     .when(__has_raw).then(__norm_upper(pl.col("modelo")).cast(pl.Utf8))
+     .otherwise(pl.lit(None, dtype=pl.Utf8))
+     .alias("modelo_normalizado")
+)
+
+# Optional audit flag
+lf = lf.with_columns(
+    pl.when(__has_base).then(pl.lit("base"))
+     .when(__has_norm).then(pl.lit("dgt_norm"))
+     .when(__has_raw).then(pl.lit("raw_model"))
+     .otherwise(pl.lit("missing"))
+     .alias("modelo_source")
+)
+# --- END: Fallback priority for modelo_normalizado (cloud) ---
