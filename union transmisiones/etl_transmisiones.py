@@ -174,8 +174,10 @@ def process_all(args):
         if args.mappings_file is None:
             args.mappings_file = str(REPO_ROOT / "mappings/bca_mappings.yml")
         if args.fuel_json is None:
-            # optional; keep None if you don't have it
+            # Prefer mappings/fuels.json (legacy). Si no existe, usar fuel_aliases.json en repo root.
             default_fuel = REPO_ROOT / "mappings/fuels.json"
+            if not default_fuel.exists():
+                default_fuel = REPO_ROOT / "fuel_aliases.json"
             args.fuel_json = str(default_fuel) if default_fuel.exists() else None
         if args.whitelist_xlsx is None:
             default_wl = REPO_ROOT / "whitelist.xlsx"
@@ -333,4 +335,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
