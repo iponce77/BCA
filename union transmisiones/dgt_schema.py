@@ -127,43 +127,71 @@ def _apply_mappings(
 ) -> pl.LazyFrame:
     """
     - Aplica mappings de marcas y combustibles si se proporcionan.
-    - No asume nombres exactos en mapas; intenta candidatos razonables.
+    - No asume nombres exactos en mapas; detecta dinámicamente clave y destino.
     """
-    # brands_map expected columns: e.g. ["marca_normalizada","marca_final"]
+    # ----------------- BRANDS -----------------
     if brands_map is not None:
         b = brands_map
         b_names = set(b.columns)
-        if "marca_normalizada" in lf.collect_schema().names() and (
-            "marca_normalizada" in b_names or len(b_names) > 1
-        ):
-            lf = lf.join(b.lazy(), on="marca_normalizada", how="left")
-            # Prefer mapped column if present
-            for cand in ("marca_final", "marca_std", "brand_std", "brand"):
-                if cand in b_names:
-                    lf = lf.with_columns(
-                        pl.coalesce([pl.col(cand), pl.col("marca_normalizada")]).alias("marca_normalizada")
-                    )
-                    break
+        lf_names = set(lf.collect_schema().names())
 
-    # fuels_map expected columns: e.g. ["combustible_norm","combustible_final"]
+        # Determina clave de join en brands_map
+        brand_key_candidates = ("marca_normalizada", "alias_norm", "alias", "brand_alias", "brand_norm")
+        b_key = next((c for c in brand_key_candidates if c in b_names), None)
+
+        # Asegura columna "marca_normalizada" en el LF para el join
+        if b_key is not None and "marca_normalizada" in lf_names:
+            lf = lf.join(b.lazy().rename({b_key: "brand_join_key"}), left_on="marca_normalizada", right_on="brand_join_key", how="left")
+
+            # Determina columna de salida preferida
+            brand_out_candidates = ("marca_final", "marca_std", "brand_std", "brand")
+            out_col = next((c for c in brand_out_candidates if c in b_names), None)
+            if out_col:
+                lf = lf.with_columns(
+                    pl.coalesce([pl.col(out_col), pl.col("marca_normalizada")]).alias("marca_normalizada")
+                )
+
+    # ----------------- FUELS -----------------
     if fuels_map is not None:
         f = fuels_map
         f_names = set(f.columns)
         lf_names = set(lf.collect_schema().names())
 
-        if "combustible_norm" in lf_names and ("combustible_norm" in f_names or len(f_names) > 1):
-            lf = lf.join(f.lazy(), on="combustible_norm", how="left")
-            for cand in ("fuel_final", "combustible_final", "fuel_std"):
-                if cand in f_names:
-                    lf = lf.with_columns(
-                        pl.coalesce([pl.col(cand), pl.col("combustible_norm")]).alias("combustible")
-                    )
-                    break
+        # Determina clave de join válida en fuels_map
+        fuel_key_candidates = ("combustible_norm", "alias_norm", "alias", "fuel_alias", "fuel_norm")
+        f_key = next((c for c in fuel_key_candidates if c in f_names), None)
 
-        # Ensure combustible existe aunque no haya mapeo explícito
-        lf_names = set(lf.collect_schema().names())
-        if "combustible" not in lf_names and "combustible_norm" in lf_names:
-            lf = lf.with_columns(pl.col("combustible_norm").alias("combustible"))
+        # Asegura columna de join en el LF (crea combustible_norm si hiciera falta)
+        if f_key is not None:
+            if "combustible_norm" not in lf_names:
+                if "combustible" in lf_names:
+                    lf = lf.with_columns(norm_upper(pl.col("combustible")).alias("combustible_norm"))
+                else:
+                    # no hay nada con lo que unir: salimos sin aplicar mapping
+                    return lf
+
+            # Renombrar clave del mapping a un nombre común y unir
+            f_lazy = f.lazy().rename({f_key: "fuel_join_key"})
+            lf = lf.with_columns(pl.col("combustible_norm").alias("fuel_join_key")) \
+                   .join(f_lazy, on="fuel_join_key", how="left") \
+                   .drop("fuel_join_key")
+
+            # Establecer columna combustible final con preferencia de candidatos
+            fuel_out_candidates = ("fuel_final", "combustible_final", "fuel_std", "combustible")
+            out_fuel = next((c for c in fuel_out_candidates if c in f_names), None)
+
+            if out_fuel:
+                lf = lf.with_columns(
+                    pl.coalesce(
+                        [pl.col(out_fuel)]
+                        + [pl.col(c) for c in ["combustible", "combustible_norm"] if c in lf.collect_schema().names()]
+                    ).alias("combustible")
+                )
+            else:
+                # Sin columna destino específica: al menos asegura 'combustible'
+                lf_names = set(lf.collect_schema().names())
+                if "combustible" not in lf_names and "combustible_norm" in lf_names:
+                    lf = lf.with_columns(pl.col("combustible_norm").alias("combustible"))
 
     return lf
 
@@ -189,7 +217,7 @@ def standardize_lazyframe(
     # 2) ensure required basics
     lf = _ensure_types_and_derivations(lf, yyyymm_hint)
 
-    # 3) apply mappings
+    # 3) apply mappings (robusto a nombres en los diccionarios)
     lf = _apply_mappings(lf, brands_map, fuels_map)
 
     # 4) enforce dtypes para columnas clave cuando existan
