@@ -1,277 +1,166 @@
 import polars as pl
 import unicodedata
 import re
+from typing import Iterable, Optional
 
-def _strip_accents_upper(s: str) -> str:
+# -----------------------------
+# Helpers
+# -----------------------------
+def _strip_accents_upper(s: Optional[str]) -> Optional[str]:
     if s is None:
         return s
-    # NFD separa letras de “marcas” (acentos); luego quitamos las marcas
     s = unicodedata.normalize("NFD", s)
     s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
     return s.upper()
 
-
-COLUMN_SYNONYMS = {
-    "fecha_mat": ["fecha_mat","fecha","fecha_matriculacion","fecha matriculación","fecha primera matriculacion","f_mat"],
-    "marca": ["make_clean","marca","make","fabricante","brand"],
-    "modelo": ["modelo","model","modelo_bare"],
-    "submodelo": ["submodelo","version","versión"],
-    "vin": ["vin","bastidor","num_bastidor"],
-    "combustible": ["combustible","fuel","tipo_combustible"],
-    "codigo_ine": ["codigo_ine","cod_ine"],
-    "localidad": ["localidad","municipio","poblacion","población"],
-    "provincia": ["provincia"],
-    "tipo_vehiculo": ["tipo_vehiculo","tipo","categoria","categoría"],
-    "transmision": ["transmision","cambio","caja_cambios","caja de cambios"],
-    "año_mat": ["año_mat","ano_mat","aÃ±o_mat","anio_mat"],
-    "mes_mat": ["mes_mat","mes_matriculacion","mes"],
-    "antiguedad_anios": ["antiguedad_anios","antigüedad","antiguedad","edad_anios","edad_anos"],
-    "nombre_archivo": ["nombre_archivo","source_file"],
-    "es_cruzable": ["es_cruzable","cruzable"],
-    "codigo_provincia": ["codigo_provincia","cod_prov","ineprov"],
-    # Nota: en tu schema funcional, modelo_base es sinónimo de modelo_normalizado
-    "modelo_normalizado": ["modelo_normalizado","modelo_norm","model_normalized","modelo_base"],
-}
-
-_ACCENTS = str.maketrans("ÁÀÄÂÃÉÈËÊÍÌÏÎÓÒÖÔÚÙÜÛÑáàäâãéèëêíìïîóòöôúùüûñ",
-                         "AAAAAEEEEIIIIOOOOUUUUNAAAAAEEEEIIIIOOOOUUUUN")
-
 def norm_upper(expr: pl.Expr) -> pl.Expr:
     return (
-        expr
-        .cast(pl.Utf8, strict=False)
-        .map_elements(_strip_accents_upper, return_dtype=pl.Utf8)
+        expr.cast(pl.Utf8, strict=False)
+            .map_elements(_strip_accents_upper, return_dtype=pl.Utf8)
     )
 
-def build_rename_map_from_names(names: list[str]) -> dict[str,str]:
-    lo = [c.lower() for c in names]
-    rename={}
-    for canon, syns in COLUMN_SYNONYMS.items():
-        for s in syns:
-            s_low = s.lower()
-            if s_low in lo:
-                i = lo.index(s_low)
-                old = names[i]
-                if old != canon: rename[old] = canon
+# -----------------------------
+# Column synonyms (minimal set)
+# -----------------------------
+COLUMN_SYNONYMS: dict[str, list[str]] = {
+    "fecha_mat": ["fecha_mat","fecha","fecha_matriculacion","fecha matriculacion","fecha primera matriculacion","f_mat","fec_mat"],
+    "marca": ["marca","make","fabricante","brand","make_clean"],
+    "modelo": ["modelo","model","modelo_base","model_clean"],
+    "tipo_vehiculo": ["tipo_vehiculo","tipo","segmento","categoria","tipo vehiculo"],
+    "provincia": ["provincia","prov","provincia_dgt","province"],
+    "codigo_provincia": ["codigo_provincia","cod_prov","ine_prov","ine"],
+    "combustible": ["combustible","fuel","carburante","tipo_combustible"],
+    "yyyymm": ["yyyymm","mes","periodo","period","yyyy_mm"],
+    "anio": ["anio","ano","year"],
+}
+
+# Build a rename map based on present names (case/accents/underscore-insensitive)
+def build_rename_map_from_names(names: Iterable[str]) -> dict[str, str]:
+    present = list(names)
+    norm_present = { _strip_accents_upper(n).replace(" ","").replace("-","").replace("_",""): n for n in present }
+    rename: dict[str,str] = {}
+    for canonical, syns in COLUMN_SYNONYMS.items():
+        for s in [canonical] + syns:
+            key = _strip_accents_upper(s).replace(" ","").replace("-","").replace("_","")
+            if key in norm_present:
+                rename[ norm_present[key] ] = canonical
                 break
     return rename
 
-def safe_rename_first(lf: pl.LazyFrame) -> pl.LazyFrame:
-    # 1) Normaliza nombres crudos (quita espacios y \r/\n)
-    names0 = lf.collect_schema().names()
-    cleaned = {old: old.strip().replace("\r", "").replace("\n", "")
-               for old in names0
-               if old != old.strip() or ("\r" in old) or ("\n" in old)}
-    if cleaned:
-        lf = lf.rename(cleaned)
+# -----------------------------
+# Public API expected by ETL:
+#   - standardize_lazyframe()
+#   - keep_tipos()
+# -----------------------------
+def _ensure_types_and_derivations(lf: pl.LazyFrame, yyyymm_hint: Optional[int]) -> pl.LazyFrame:
+    cols = lf.columns
 
-    # 2) Construye mapa de renombre a canónicos según COLUMN_SYNONYMS
-    names = lf.collect_schema().names()
-    rm = build_rename_map_from_names(names)
+    # yyyymm from fecha_mat if needed
+    if "yyyymm" not in cols:
+        if "fecha_mat" in cols:
+            lf = lf.with_columns([
+                pl.col("fecha_mat").str.strptime(pl.Date, strict=False, fmt=None).dt.strftime("%Y%m").cast(pl.Int64).alias("yyyymm")
+            ])
+        elif yyyymm_hint is not None:
+            lf = lf.with_columns(pl.lit(int(yyyymm_hint)).alias("yyyymm"))
 
-    # 3) Evita duplicados: si el canónico ya existe, NO renombres ese sinónimo
-    names_set = set(names)
-    rm_safe = {}
-    for old, canon in rm.items():
-        if canon in names_set:
-            # ya existe la columna canónica; saltamos el renombre de este sinónimo
-            continue
-        rm_safe[old] = canon
+    # anio from yyyymm
+    if "anio" not in lf.columns and "yyyymm" in lf.columns:
+        lf = lf.with_columns((pl.col("yyyymm") // 100).cast(pl.Int64).alias("anio"))
 
-    if rm_safe:
-        lf = lf.rename(rm_safe)
+    # Normalized text versions
+    if "marca" in lf.columns:
+        lf = lf.with_columns(norm_upper(pl.col("marca")).alias("marca_normalizada"))
+    if "modelo" in lf.columns:
+        lf = lf.with_columns(norm_upper(pl.col("modelo")).alias("modelo_normalizado"))
+    if "tipo_vehiculo" in lf.columns:
+        lf = lf.with_columns(norm_upper(pl.col("tipo_vehiculo")).alias("tipo_vehiculo_norm"))
+    if "combustible" in lf.columns:
+        lf = lf.with_columns(norm_upper(pl.col("combustible")).alias("combustible_norm"))
+    if "provincia" in lf.columns:
+        lf = lf.with_columns(norm_upper(pl.col("provincia")).alias("provincia_norm"))
 
     return lf
 
+def _apply_mappings(
+    lf: pl.LazyFrame,
+    brands_map: Optional[pl.DataFrame],
+    fuels_map: Optional[pl.DataFrame],
+) -> pl.LazyFrame:
+    # brands_map expected columns: e.g. ["marca_normalizada","marca_final"]
+    if brands_map is not None and "marca_normalizada" in lf.columns:
+        b = brands_map
+        join_key = "marca_normalizada" if "marca_normalizada" in b.columns else None
+        if join_key:
+            lf = lf.join(b.lazy(), on="marca_normalizada", how="left")
+            # Prefer mapped column if present
+            for cand in ["marca_final","marca_std","brand_std","brand"]:
+                if cand in b.columns:
+                    lf = lf.with_columns(
+                        pl.coalesce([pl.col(cand), pl.col("marca_normalizada")]).alias("marca_normalizada")
+                    )
+                    break
 
-def yyyymm_from_date(col: str) -> pl.Expr:
-    return (pl.col(col).dt.year()*100 + pl.col(col).dt.month()).alias("yyyymm")
+    # fuels_map expected columns: e.g. ["combustible_norm","combustible_final"]
+    if fuels_map is not None and "combustible_norm" in lf.columns:
+        f = fuels_map
+        join_key = "combustible_norm" if "combustible_norm" in f.columns else None
+        if join_key:
+            lf = lf.join(f.lazy(), on="combustible_norm", how="left")
+            for cand in ["fuel_final","combustible_final","fuel_std"]:
+                if cand in f.columns:
+                    lf = lf.with_columns(
+                        pl.coalesce([pl.col(cand), pl.col("combustible_norm")]).alias("combustible")
+                    )
+                    break
+        # Ensure combustible exists
+        if "combustible" not in lf.columns and "combustible_norm" in lf.columns:
+            lf = lf.with_columns(pl.col("combustible_norm").alias("combustible"))
 
-def standardize_lazyframe(lf: pl.LazyFrame, yyyymm_hint: int | None, brands_map: pl.DataFrame | None, fuels_map: pl.DataFrame | None) -> pl.LazyFrame:
-    lf = safe_rename_first(lf)
+    return lf
 
-    # PRIORIDAD: make_clean (si existe) > marca
-    names = lf.collect_schema().names()
-    if "make_clean" in names:
-        # Prioriza make_clean cuando exista
-        lf = lf.with_columns(pl.col("make_clean").alias("marca"))
+def standardize_lazyframe(
+    lf_raw: pl.LazyFrame,
+    yyyymm_hint: Optional[int] = None,
+    brands_map: Optional[pl.DataFrame] = None,
+    fuels_map: Optional[pl.DataFrame] = None,
+) -> pl.LazyFrame:
+    """
+    - Normaliza nombres de columnas usando COLUMN_SYNONYMS
+    - Deriva yyyymm (desde fecha_mat o hint) y anio
+    - Normaliza strings en mayúsculas sin acentos
+    - Aplica mappings de marcas y combustibles (si se pasan)
+    """
+    # 1) rename columns to canonical
+    rename = build_rename_map_from_names(lf_raw.columns)
+    lf = lf_raw.rename(rename)
 
-    lf = lf.with_columns(
-        pl.col("fecha_mat").cast(pl.Utf8).str.strptime(pl.Date, "%d/%m/%Y", strict=False)
-                           .fill_null(pl.col("fecha_mat").cast(pl.Utf8).str.strptime(pl.Date, "%Y-%m-%d", strict=False))
-                           .alias("fecha_mat_parsed")
-    )
+    # 2) ensure required basics
+    lf = _ensure_types_and_derivations(lf, yyyymm_hint)
 
-    hint_year = int(yyyymm_hint)//100 if yyyymm_hint else None
+    # 3) apply mappings
+    lf = _apply_mappings(lf, brands_map, fuels_map)
 
-    # --- anio = AÑO DE MATRICULACIÓN (prioridad: año_mat -> fecha_mat_parsed -> hint_year)
-    lf = lf.with_columns([
-        pl.when(pl.col("año_mat").is_not_null())
-          .then(pl.col("año_mat").cast(pl.Int64, strict=False))
-          .when(pl.col("fecha_mat_parsed").is_not_null())
-          .then(pl.col("fecha_mat_parsed").dt.year())
-          .otherwise(pl.lit(hint_year, dtype=pl.Int64))
-          .alias("anio"),
-    ])
+    # 4) enforce dtypes for key columns when present
+    sel = []
+    for c in ["yyyymm","anio","codigo_provincia","unidades"]:
+        if c in lf.columns:
+            sel.append(pl.col(c).cast(pl.Int64, strict=False).alias(c))
+    if sel:
+        lf = lf.with_columns(sel)
 
-    # --- yyyymm = MES DE TRANSMISIÓN (prioridad: 'transmision' "YYYY-MM"/"YYYY/MM" -> yyyymm_hint)
-    lf = lf.with_columns([
-        pl.when(
-            pl.col("transmision").is_not_null()
-            & pl.col("transmision").cast(pl.Utf8, strict=False)
-              .str.contains(r"^\d{4}[-/]\d{2}$", literal=False)
-        ).then(
-            pl.col("transmision").cast(pl.Utf8, strict=False)
-              .str.slice(0, 7)                               # "YYYY-MM" o "YYYY/MM"
-              .str.replace_all(r"[-/]", "", literal=False)   # "YYYYMM"
-              .cast(pl.Int64, strict=False)
-        ).otherwise(
-            pl.lit(yyyymm_hint, dtype=pl.Int64)
-        ).alias("yyyymm"),
-    ])
-
-    # --- NORMALIZACIÓN DE INE (solo INE, sin localidad) ---
-    # Reglas:
-    # - Si es numérico como "28065" o "28065.0" => usar 28065
-    # - Si tiene 4 dígitos => pad a 5 con '0' delante (p.ej. 4561 -> 04561)
-    # - Si no es numérico => null (no rompe)
-    raw_ine = pl.col("codigo_ine").cast(pl.Utf8, strict=False).str.strip_chars().str.replace_all("\r", "").str.replace_all("\n", "")
-    is_numeric_like = raw_ine.str.contains(r"^\d+(\.0+)?$", literal=False)
-    ine_digits = (
-        pl.when(is_numeric_like)
-          .then(raw_ine.str.replace(r"\.0+$", "", literal=False))
-          .otherwise(None)
-          .cast(pl.Utf8)
-    )
-    ine_len = ine_digits.str.len_chars()
-    codigo_ine_norm = (
-        pl.when(ine_len == 4).then(ine_digits.str.pad_start(5, "0"))
-         .when(ine_len == 5).then(ine_digits)
-         .otherwise(None)
-         .alias("codigo_ine")
-    )
-    lf = lf.with_columns(codigo_ine_norm)
-
-    lf = lf.with_columns([
-        pl.col("provincia").cast(pl.Utf8).str.strip_chars().alias("provincia"),
-        pl.when(pl.col("codigo_provincia").is_not_null())
-          .then(pl.col("codigo_provincia").cast(pl.Utf8))
-          .when(pl.col("codigo_ine").is_not_null())
-          .then(pl.col("codigo_ine").cast(pl.Utf8).str.slice(0,2))
-          .otherwise(pl.lit(None, dtype=pl.Utf8)).alias("codigo_provincia")
-    ])
-
-    lf = lf.with_columns([
-        norm_upper(pl.col("tipo_vehiculo")).alias("tipo_vehiculo_norm"),
-        pl.col("transmision").cast(pl.Utf8).alias("transmision"),
-        pl.col("antiguedad_anios").cast(pl.Float64, strict=False).alias("antiguedad_anios"),
-    ])
-
-    lf = lf.with_columns(norm_upper(pl.col("marca")).alias("_marca_alias_norm"))
-    if brands_map is not None and brands_map.height > 0:
-        lf = (lf.join(brands_map.lazy(), left_on="_marca_alias_norm", right_on="alias_norm", how="left")
-                .with_columns(pl.coalesce([pl.col("marca_normalizada"), norm_upper(pl.col("marca"))]).alias("marca_normalizada")))
-    else:
-        lf = lf.with_columns(norm_upper(pl.col("marca")).alias("marca_normalizada"))
-
-    lf = lf.with_columns(norm_upper(pl.col("combustible")).alias("_comb_alias_norm"))
-    if fuels_map is not None and fuels_map.height > 0:
-        lf = (lf.join(fuels_map.lazy(), left_on="_comb_alias_norm", right_on="alias_norm", how="left")
-                .with_columns(pl.coalesce([pl.col("combustible_right"), pl.lit("OTROS")]).alias("combustible")))
-    else:
-        lf = lf.with_columns(
-            pl.when(pl.col("_comb_alias_norm").str.contains("PHEV|PLUG")).then(pl.lit("PHEV"))
-             .when(pl.col("_comb_alias_norm").str.contains("HEV|HIBRIDO|MHEV")).then(pl.lit("HEV"))
-             .when(pl.col("_comb_alias_norm").str.contains("ELECTRICO|EV|BEV")).then(pl.lit("BEV"))
-             .when(pl.col("_comb_alias_norm").str.contains("DIESEL|GASOIL")).then(pl.lit("DIESEL"))
-             .when(pl.col("_comb_alias_norm").str.contains("GASOLINA|PETROL|BENZINA")).then(pl.lit("GASOLINA"))
-             .otherwise(pl.lit("OTROS")).alias("combustible")
-        )
-
-    # PRIORIDAD: modelo_base > modelo_normalizado (existente) > modelo
-    names = lf.collect_schema().names()
-    if "modelo_base" in names:
-        # Si existe modelo_base en el esquema, priorizamos su uso (cuando aporte texto)
-        trimmed_modelo_base = norm_upper(pl.col("modelo_base"))
-        if "modelo_normalizado" in names:
-            trimmed_modelo_norm = norm_upper(pl.col("modelo_normalizado"))
-            lf = lf.with_columns(
-                pl.when(pl.col("modelo_base").is_not_null() & (trimmed_modelo_base.str.len_chars() > 0))
-                  .then(pl.col("modelo_base").cast(pl.Utf8))
-                  .when(pl.col("modelo_normalizado").is_not_null() & (trimmed_modelo_norm.str.len_chars() > 0))
-                  .then(pl.col("modelo_normalizado").cast(pl.Utf8))
-                  .otherwise(pl.lit(None, dtype=pl.Utf8))
-                  .alias("modelo_normalizado")
-            )
-        else:
-            lf = lf.with_columns(
-                pl.when(pl.col("modelo_base").is_not_null() & (trimmed_modelo_base.str.len_chars() > 0))
-                  .then(pl.col("modelo_base").cast(pl.Utf8))
-                  .otherwise(pl.lit(None, dtype=pl.Utf8))
-                  .alias("modelo_normalizado")
-            )
-    elif "modelo_normalizado" in names:
-        # No hay modelo_base, pero ya existe modelo_normalizado: usarlo si aporta valor
-        trimmed_modelo_norm = norm_upper(pl.col("modelo_normalizado"))
-        lf = lf.with_columns(
-            pl.when(pl.col("modelo_normalizado").is_not_null() & (trimmed_modelo_norm.str.len_chars() > 0))
-              .then(pl.col("modelo_normalizado").cast(pl.Utf8))
-              .otherwise(pl.lit(None, dtype=pl.Utf8))
-              .alias("modelo_normalizado")
-        )
-    else:
-        lf = lf.with_columns(pl.lit(None, dtype=pl.Utf8).alias("modelo_normalizado"))
-   
-
-    lf = lf.with_columns([
-        pl.col("yyyymm").cast(pl.Int64, strict=False).alias("yyyymm"),
-        pl.col("anio").cast(pl.Int64, strict=False).alias("anio"),
-    ])
     return lf
 
 def keep_tipos(lf: pl.LazyFrame, include: list[str]) -> pl.LazyFrame:
-    if not include: return lf
-    tokens=[]
+    if not include:
+        return lf
+    tokens = []
     for t in include:
-        u = t.upper().strip()
+        u = _strip_accents_upper(t or "").strip()
         u = u.replace("TODOTERRENO","TODO TERRENO").replace("TODOTERRENOS","TODO TERRENO")
         u = u.replace("TURISMOS","TURISMO")
         tokens.append(u)
     pat = "(" + "|".join([re.escape(x) for x in tokens]) + ")"
-    return lf.filter(pl.col("tipo_vehiculo_norm").is_null() | pl.col("tipo_vehiculo_norm").str.contains(pat))
+    col = "tipo_vehiculo_norm" if "tipo_vehiculo_norm" in lf.columns else "tipo_vehiculo"
+    return lf.filter(pl.col(col).is_null() | pl.col(col).str.contains(pat))
 
-# --- BEGIN: Fallback priority for modelo_normalizado (cloud) ---
-# Priority:
-# 1) modelo_base (if non-empty)
-# 2) modelo_normalizado (if non-empty)
-# 3) FINAL FALLBACK: normalized raw 'modelo' (if non-empty)
-def __norm_upper(expr: pl.Expr) -> pl.Expr:
-    return (
-        pl.when(expr.is_not_null())
-        .then(expr.cast(pl.Utf8).str.strip_chars().str.normalize('NFKD').str.to_uppercase())
-        .otherwise(expr)
-    )
-
-__names = set(lf.columns)
-
-__has_base = (pl.col("modelo_base").is_not_null() & (__norm_upper(pl.col("modelo_base")).str.len_chars() > 0)) if "modelo_base" in __names else pl.lit(False)
-__has_norm = (pl.col("modelo_normalizado").is_not_null() & (__norm_upper(pl.col("modelo_normalizado")).str.len_chars() > 0)) if "modelo_normalizado" in __names else pl.lit(False)
-__has_raw  = (pl.col("modelo").is_not_null() & (__norm_upper(pl.col("modelo")).str.len_chars() > 0)) if "modelo" in __names else pl.lit(False)
-
-lf = lf.with_columns(
-    pl.when(__has_base).then(pl.col("modelo_base").cast(pl.Utf8))
-     .when(__has_norm).then(pl.col("modelo_normalizado").cast(pl.Utf8))
-     .when(__has_raw).then(__norm_upper(pl.col("modelo")).cast(pl.Utf8))
-     .otherwise(pl.lit(None, dtype=pl.Utf8))
-     .alias("modelo_normalizado")
-)
-
-# Optional audit flag
-lf = lf.with_columns(
-    pl.when(__has_base).then(pl.lit("base"))
-     .when(__has_norm).then(pl.lit("dgt_norm"))
-     .when(__has_raw).then(pl.lit("raw_model"))
-     .otherwise(pl.lit("missing"))
-     .alias("modelo_source")
-)
-# --- END: Fallback priority for modelo_normalizado (cloud) ---
