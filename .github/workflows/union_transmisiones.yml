@@ -19,7 +19,7 @@ jobs:
       BCA_MONTHLY_FOLDER_ID: ${{ secrets.BCA_MONTHLY_FOLDER_ID }}
       DGT_PARQUET_FOLDER_ID: ${{ secrets.DGT_PARQUET_FOLDER_ID }}
       GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64 }}
-      GOOGLE_DRIVE_SCOPE: https://www.googleapis.com/auth/drive
+      GOOGLE_DRIVE_SCOPE: https://www.googleapis.com/auth/drive.file
     steps:
       - name: Checkout
         uses: actions/checkout@v4
