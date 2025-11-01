@@ -1,0 +1,167 @@
+name: Union Transmisiones - Cloud
+
+on:
+  workflow_dispatch:
+    inputs:
+      months:
+        description: 'N últimos meses (rolling)'
+        required: false
+        default: '12'
+      latest_yyyymm:
+        description: 'Forzar último YYYYMM (opcional, ej. 202506). Si vacío, autodetecta.'
+        required: false
+        default: ''
+
+jobs:
+  union-transmisiones:
+    runs-on: ubuntu-latest
+    env:
+      # Secrets esperados (define estos secretos en tu repo/settings):
+      BCA_MONTHLY_FOLDER_ID: ${{ secrets.BCA_MONTHLY_FOLDER_ID }}
+      DGT_PARQUET_FOLDER_ID: ${{ secrets.DGT_PARQUET_FOLDER_ID }}
+      # OAuth para Google Drive (usar el mismo secret que tus otros workflows)
+      GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64_FULL || secrets.GOOGLE_OAUTH_B64 }}
+      GOOGLE_DRIVE_SCOPE: https://www.googleapis.com/auth/drive
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install pyarrow polars google-api-python-client google-auth-httplib2 google-auth-oauthlib requests beautifulsoup4 openpyxl
+
+      - name: Prepare workspace
+        run: |
+          mkdir -p work/dgt_monthly_parquet
+          mkdir -p salida
+
+      - name: Download bca_enriched.parquet from Drive (BCA_MONTHLY_FOLDER_ID)
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          BCA_MONTHLY_FOLDER_ID: ${{ secrets.BCA_MONTHLY_FOLDER_ID }}
+        run: |
+          python - << 'PY'
+          from pathlib import Path
+          from googleapiclient.http import MediaIoBaseDownload
+          from gdrive_auth import authenticate_drive
+          import io, os, sys
+          FOLDER_ID = os.environ["BCA_MONTHLY_FOLDER_ID"]
+          TARGET_NAME = "bca_enriched.parquet"
+          OUT = Path("work") / TARGET_NAME
+          svc = authenticate_drive()
+          q = " and ".join([
+              f"'{FOLDER_ID}' in parents",
+              "trashed = false",
+              f"name = '{TARGET_NAME}'"
+          ])
+          resp = svc.files().list(
+              q=q, fields="files(id,name,modifiedTime)", pageSize=1,
+              includeItemsFromAllDrives=True, supportsAllDrives=True
+          ).execute()
+          files = resp.get("files", [])
+          if not files:
+              sys.exit("⛔ No se encontró bca_enriched.parquet en la carpeta indicada (BCA_MONTHLY_FOLDER_ID).")
+          fid = files[0]["id"]
+          req = svc.files().get_media(fileId=fid)
+          buf = io.BytesIO()
+          dl = MediaIoBaseDownload(buf, req)
+          done = False
+          while not done:
+              _, done = dl.next_chunk()
+          OUT.write_bytes(buf.getvalue())
+          print(f"✅ Descargado {TARGET_NAME} → {OUT}")
+          PY
+
+      - name: Download last N dgt_transmisiones_*.parquet (DGT_PARQUET_FOLDER_ID)
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          DGT_PARQUET_FOLDER_ID: ${{ secrets.DGT_PARQUET_FOLDER_ID }}
+          INPUT_MONTHS: ${{ github.event.inputs.months }}
+          INPUT_LATEST_YYYYMM: ${{ github.event.inputs.latest_yyyymm }}
+        run: |
+          python - << 'PY'
+          from pathlib import Path
+          from googleapiclient.http import MediaIoBaseDownload
+          from gdrive_auth import authenticate_drive
+          import io, os, re, sys
+          FOLDER_ID = os.environ["DGT_PARQUET_FOLDER_ID"]
+          OUTDIR = Path("work/dgt_monthly_parquet")
+          OUTDIR.mkdir(parents=True, exist_ok=True)
+          N = int(os.environ.get("INPUT_MONTHS") or "12")
+          LATEST = os.environ.get("INPUT_LATEST_YYYYMM") or ""
+          pat = re.compile(r"^(?:resultado_mensual_trf|dgt_transmisiones)_(\d{6})\.parquet$", re.I)
+          svc = authenticate_drive()
+          resp = svc.files().list(
+              q=f"'{FOLDER_ID}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'",
+              fields="files(id,name,modifiedTime,size)",
+              pageSize=1000,
+              includeItemsFromAllDrives=True, supportsAllDrives=True
+          ).execute()
+          files = resp.get("files", [])
+          items = []
+          for f in files:
+              m = pat.match(f["name"])
+              if m:
+                  yyyymm = int(m.group(1))
+                  items.append((yyyymm, f["id"], f["name"]))
+          if not items:
+              sys.exit("⛔ No se encontraron resultado_mensual_trf_* o dgt_transmisiones_*.parquet en la carpeta DGT.")
+          items.sort(key=lambda x: x[0], reverse=True)
+          if LATEST:
+              try:
+                  lim = int(LATEST)
+                  items = [it for it in items if it[0] <= lim]
+              except ValueError:
+                  pass
+          pick = items[:N]
+          if not pick:
+              sys.exit("⛔ Selección vacía tras aplicar filtros.")
+          for yyyymm, fid, name in pick:
+              req = svc.files().get_media(fileId=fid)
+              buf = io.BytesIO()
+              dl = MediaIoBaseDownload(buf, req)
+              done = False
+              while not done:
+                  _, done = dl.next_chunk()
+              (OUTDIR / name).write_bytes(buf.getvalue())
+              print(f"✅ {name}")
+          print(f"Descargados {len(pick)} mensuales a {OUTDIR}")
+          PY
+
+      - name: Run Unión Transmisiones (rolling)
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python "union transmisiones/etl_transmisiones.py" \
+            --input-dir "work/dgt_monthly_parquet" \
+            --mode rolling \
+            --months "${{ github.event.inputs.months }}" \
+            --out-dir "salida" \
+            --mappings-file "${{ github.workspace }}/union transmisiones/mappings/bca_mappings.yml" \
+            --fuel-json "${{ github.workspace }}/fuel_aliases.json" \
+            --whitelist-xlsx "" \
+            --log-level INFO
+
+      - name: Upload outputs to Drive (BCA_MONTHLY_FOLDER_ID)
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          BCA_MONTHLY_FOLDER_ID: ${{ secrets.BCA_MONTHLY_FOLDER_ID }}
+        run: |
+          ls -l salida || true
+          python scripts/upload_monthly.py \
+            --folder "$BCA_MONTHLY_FOLDER_ID" \
+            --files "salida/agg_transmisiones.parquet,salida/agg_transmisiones_ine.parquet"
+
+      - name: Upload outputs as artifact (fallback)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: union-transmisiones-output
+          path: salida/*.parquet
