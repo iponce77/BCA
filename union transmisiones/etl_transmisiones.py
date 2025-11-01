@@ -257,23 +257,23 @@ def process_all(args):
         elif p.lower().endswith(".parquet"):
             m = uio.infer_yyyymm_from_name(p); months_seen.append(m)
             lf_raw = pl.scan_parquet(p)
-                lf = ds.standardize_lazyframe(lf_raw, yyyymm_hint=m, brands_map=maps["brands_df"], fuels_map=maps["fuels_df"])
-                # Ejecuta agregación y registra métricas por fichero (debug)
-                try:
-                    agg_m = mx.aggregate_month(lf, include_tipos)
-                except Exception as e:
-                    logging.exception(f"Error agregando mes {m} desde {inner}: {e}")
-                    agg_m = pl.DataFrame()
-                logging.info(f"Agregado mes {m} ({inner}): filas_agregado={getattr(agg_m,'height', '??')}")
-                agg_months.append(agg_m)
+            lf = ds.standardize_lazyframe(lf_raw, yyyymm_hint=m, brands_map=maps["brands_df"], fuels_map=maps["fuels_df"])
+            # Ejecuta agregación y registra métricas por fichero (debug)
+            try:
+                agg_m = mx.aggregate_month(lf, include_tipos)
+            except Exception as e:
+                logging.exception(f"Error agregando mes {m} desde {inner}: {e}")
+                agg_m = pl.DataFrame()
+            logging.info(f"Agregado mes {m} ({inner}): filas_agregado={getattr(agg_m,'height', '??')}")
+            agg_months.append(agg_m)
 
-                try:
-                    agg_m_ine = mx.aggregate_month_ine(lf, include_tipos)
-                except Exception as e:
-                    logging.exception(f"Error agregando INE mes {m} desde {inner}: {e}")
-                    agg_m_ine = pl.DataFrame()
-                logging.info(f"Agregado INE mes {m} ({inner}): filas_agregado_ine={getattr(agg_m_ine,'height','??')}")
-                agg_months_ine.append(agg_m_ine)
+            try:
+                agg_m_ine = mx.aggregate_month_ine(lf, include_tipos)
+            except Exception as e:
+                logging.exception(f"Error agregando INE mes {m} desde {inner}: {e}")
+                agg_m_ine = pl.DataFrame()
+            logging.info(f"Agregado INE mes {m} ({inner}): filas_agregado_ine={getattr(agg_m_ine,'height','??')}")
+            agg_months_ine.append(agg_m_ine)
 
         elif p.lower().endswith(".csv.gz"):
             m = uio.infer_yyyymm_from_name(p); months_seen.append(m)
@@ -363,6 +363,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
