@@ -1,43 +1,631 @@
 brands:
 - aliases:
-  - MERCEDES-BENZ
-  - MB
-  - MERCEDES
-  canonical: MERCEDES BENZ
+  - "ABARTH"
+  canonical: "ABARTH"
 - aliases:
-  - VW
-  - VOLKSWAGEN
-  canonical: VOLKSWAGEN
+  - "ADRIA"
+  canonical: "ADRIA"
 - aliases:
-  - "\u0160KODA"
-  - SKODA
-  canonical: SKODA
-fuels:
+  - "AIWAYS"
+  canonical: "AIWAYS"
 - aliases:
-  - DIESEL
-  - GASOIL
-  canonical: DIESEL
+  - "AIXAM"
+  canonical: "AIXAM"
 - aliases:
-  - GASOLINA
-  - PETROL
-  - BENZINA
-  canonical: GASOLINA
+  - "ALFA ROMEO"
+  canonical: "ALFA ROMEO"
 - aliases:
-  - HEV
-  - MHEV
-  - HYBRID
-  - HIBRIDO
-  - "H\xCDBRIDO"
-  canonical: HEV
+  - "ALPINA"
+  canonical: "ALPINA"
 - aliases:
-  - PHEV
-  - PLUG IN
-  - PLUG-IN
-  - ENCHUFABLE
-  canonical: PHEV
+  - "ALPINE RENAULT"
+  canonical: "ALPINE RENAULT"
 - aliases:
-  - BEV
-  - EV
-  - ELECTRICO
-  - "EL\xC9CTRICO"
-  canonical: BEV
+  - "APEX"
+  canonical: "APEX"
+- aliases:
+  - "APRILIA"
+  canonical: "APRILIA"
+- aliases:
+  - "ARO"
+  canonical: "ARO"
+- aliases:
+  - "ASTON MARTIN"
+  canonical: "ASTON MARTIN"
+- aliases:
+  - "AUDI"
+  canonical: "AUDI"
+- aliases:
+  - "AUSTIN"
+  canonical: "AUSTIN"
+- aliases:
+  - "AUVERLAND"
+  canonical: "AUVERLAND"
+- aliases:
+  - "AZOR"
+  canonical: "AZOR"
+- aliases:
+  - "BABBOE"
+  canonical: "BABBOE"
+- aliases:
+  - "BAIC"
+  canonical: "BAIC"
+- aliases:
+  - "BATAVUS"
+  canonical: "BATAVUS"
+- aliases:
+  - "BENTLEY"
+  canonical: "BENTLEY"
+- aliases:
+  - "BERTONE"
+  canonical: "BERTONE"
+- aliases:
+  - "BIRD"
+  canonical: "BIRD"
+- aliases:
+  - "BMW"
+  - "B.M.W."
+  - "B M W"
+  canonical: "BMW"
+- aliases:
+  - "BSP"
+  canonical: "BSP"
+- aliases:
+  - "BURSTNER"
+  canonical: "BURSTNER"
+- aliases:
+  - "BYD"
+  canonical: "BYD"
+- aliases:
+  - "CADILLAC"
+  canonical: "CADILLAC"
+- aliases:
+  - "CAN AM"
+  canonical: "CAN AM"
+- aliases:
+  - "CANGOO"
+  canonical: "CANGOO"
+- aliases:
+  - "CANNONDALE"
+  canonical: "CANNONDALE"
+- aliases:
+  - "CARQON"
+  canonical: "CARQON"
+- aliases:
+  - "CATERPILLAR"
+  canonical: "CATERPILLAR"
+- aliases:
+  - "CFMOTO"
+  canonical: "CFMOTO"
+- aliases:
+  - "CHEVROLET"
+  canonical: "CHEVROLET"
+- aliases:
+  - "CHRYSLER"
+  canonical: "CHRYSLER"
+- aliases:
+  - "CITROEN"
+  - "CITROËN"
+  canonical: "CITROEN"
+- aliases:
+  - "CORTINA"
+  canonical: "CORTINA"
+- aliases:
+  - "CORVETTE"
+  canonical: "CORVETTE"
+- aliases:
+  - "COWBOY"
+  canonical: "COWBOY"
+- aliases:
+  - "CUBE"
+  canonical: "CUBE"
+- aliases:
+  - "CUPRA"
+  canonical: "CUPRA"
+- aliases:
+  - "DACIA"
+  canonical: "DACIA"
+- aliases:
+  - "DAEWOO"
+  canonical: "DAEWOO"
+- aliases:
+  - "DAIHATSU"
+  canonical: "DAIHATSU"
+- aliases:
+  - "DAIMLER"
+  canonical: "DAIMLER"
+- aliases:
+  - "DFM DFSK"
+  canonical: "DFM DFSK"
+- aliases:
+  - "DFSK"
+  canonical: "DFSK"
+- aliases:
+  - "DODGE"
+  canonical: "DODGE"
+- aliases:
+  - "DOLLY"
+  canonical: "DOLLY"
+- aliases:
+  - "DOPPIO"
+  canonical: "DOPPIO"
+- aliases:
+  - "DS"
+  canonical: "DS"
+- aliases:
+  - "DR"
+  canonical: "DR"
+- aliases:
+  - "E ENERGIE"
+  canonical: "E ENERGIE"
+- aliases:
+  - "ELARIS"
+  canonical: "ELARIS"
+- aliases:
+  - "EVO"
+  canonical: "EVO"
+- aliases:
+  - "FD MOTORS"
+  canonical: "FD MOTORS"
+- aliases:
+  - "FERRARI"
+  canonical: "FERRARI"
+- aliases:
+  - "FIAT"
+  canonical: "FIAT"
+- aliases:
+  - "FISKER"
+  canonical: "FISKER"
+- aliases:
+  - "FLYER"
+  canonical: "FLYER"
+- aliases:
+  - "FORD"
+  canonical: "FORD"
+- aliases:
+  - "FREEBIKE"
+  canonical: "FREEBIKE"
+- aliases:
+  - "FULLPRA"
+  canonical: "FULLPRA"
+- aliases:
+  - "GALLOPER"
+  canonical: "GALLOPER"
+- aliases:
+  - "GARIA"
+  canonical: "GARIA"
+- aliases:
+  - "GAZELLE"
+  canonical: "GAZELLE"
+- aliases:
+  - "GIANT"
+  canonical: "GIANT"
+- aliases:
+  - "GILERA"
+  canonical: "GILERA"
+- aliases:
+  - "GOVECS"
+  canonical: "GOVECS"
+- aliases:
+  - "GREAT"
+  canonical: "GREAT"
+- aliases:
+  - "HANGER"
+  canonical: "HANGER"
+- aliases:
+  - "HARDON"
+  canonical: "HARDON"
+- aliases:
+  - "HARLEY DAVIDSON"
+  canonical: "HARLEY DAVIDSON"
+- aliases:
+  - "HOBBY"
+  canonical: "HOBBY"
+- aliases:
+  - "HONDA"
+  canonical: "HONDA"
+- aliases:
+  - "HUMBAUR"
+  canonical: "HUMBAUR"
+- aliases:
+  - "HUMMER"
+  canonical: "HUMMER"
+- aliases:
+  - "HUSQVARNA"
+  canonical: "HUSQVARNA"
+- aliases:
+  - "HUYSER GEN URBAN"
+  canonical: "HUYSER GEN URBAN"
+- aliases:
+  - "HYSTER"
+  canonical: "HYSTER"
+- aliases:
+  - "HYUNDAI"
+  canonical: "HYUNDAI"
+- aliases:
+  - "INDIAN MOTORCYCLE"
+  canonical: "INDIAN MOTORCYCLE"
+- aliases:
+  - "INEOS"
+  canonical: "INEOS"
+- aliases:
+  - "INFINITI"
+  canonical: "INFINITI"
+- aliases:
+  - "INNOCENTI"
+  canonical: "INNOCENTI"
+- aliases:
+  - "ISUZU"
+  canonical: "ISUZU"
+- aliases:
+  - "IVECO"
+  canonical: "IVECO"
+- aliases:
+  - "IVECO PEGASO"
+  canonical: "IVECO PEGASO"
+- aliases:
+  - "JAGUAR"
+  canonical: "JAGUAR"
+- aliases:
+  - "JEEP"
+  canonical: "JEEP"
+- aliases:
+  - "JUNGHEINRICH"
+  canonical: "JUNGHEINRICH"
+- aliases:
+  - "KALKHOFF"
+  canonical: "KALKHOFF"
+- aliases:
+  - "KAWASAKI"
+  canonical: "KAWASAKI"
+- aliases:
+  - "KETTLER"
+  canonical: "KETTLER"
+- aliases:
+  - "KGM SSANGYONG"
+  canonical: "KGM SSANGYONG"
+- aliases:
+  - "KIA"
+  canonical: "KIA"
+- aliases:
+  - "KNAAP"
+  canonical: "KNAAP"
+- aliases:
+  - "KNAUS"
+  canonical: "KNAUS"
+- aliases:
+  - "KOGA"
+  canonical: "KOGA"
+- aliases:
+  - "KTM"
+  canonical: "KTM"
+- aliases:
+  - "KUMPAN"
+  canonical: "KUMPAN"
+- aliases:
+  - "KYBURZ"
+  canonical: "KYBURZ"
+- aliases:
+  - "KYMCO"
+  canonical: "KYMCO"
+- aliases:
+  - "LADA"
+  canonical: "LADA"
+- aliases:
+  - "LAMBORGHINI"
+  canonical: "LAMBORGHINI"
+- aliases:
+  - "LANCIA"
+  canonical: "LANCIA"
+- aliases:
+  - "LAND ROVER"
+  - "LANDROVER"
+  - "LAND-ROVER"
+  canonical: "LAND ROVER"
+- aliases:
+  - "LDV"
+  canonical: "LDV"
+- aliases:
+  - "LEMMO"
+  canonical: "LEMMO"
+- aliases:
+  - "LEXUS"
+  canonical: "LEXUS"
+- aliases:
+  - "LINDE"
+  canonical: "LINDE"
+- aliases:
+  - "LMC"
+  canonical: "LMC"
+- aliases:
+  - "LOTUS"
+  canonical: "LOTUS"
+- aliases:
+  - "LUEGO"
+  canonical: "LUEGO"
+- aliases:
+  - "LUMO BIKES"
+  canonical: "LUMO BIKES"
+- aliases:
+  - "LYNK&CO"
+  - "LYNK & CO"
+  - "LYNK CO"
+  canonical: "LYNK & CO"
+- aliases:
+  - "MAHINDRA"
+  canonical: "MAHINDRA"
+- aliases:
+  - "MAN"
+  canonical: "MAN"
+- aliases:
+  - "MASERATI"
+  canonical: "MASERATI"
+- aliases:
+  - "MATERIEEL"
+  canonical: "MATERIEEL"
+- aliases:
+  - "MAXUS"
+  canonical: "MAXUS"
+- aliases:
+  - "MAYBACH"
+  canonical: "MAYBACH"
+- aliases:
+  - "MAZDA"
+  canonical: "MAZDA"
+- aliases:
+  - "MECALAC"
+  canonical: "MECALAC"
+- aliases:
+  - "MERCEDES BENZ"
+  - "MERCEDES-BENZ"
+  - "MERCEDES"
+  - "MB"
+  canonical: "MERCEDES BENZ"
+- aliases:
+  - "MERIDA"
+  canonical: "MERIDA"
+- aliases:
+  - "MG"
+  canonical: "MG"
+- aliases:
+  - "MINI"
+  - "MINI COOPER"
+  canonical: "MINI"
+- aliases:
+  - "MINI MOKE"
+  canonical: "MINI MOKE"
+- aliases:
+  - "MITSUBISHI"
+  canonical: "MITSUBISHI"
+- aliases:
+  - "MORGAN"
+  canonical: "MORGAN"
+- aliases:
+  - "MOTO GUZZI"
+  canonical: "MOTO GUZZI"
+- aliases:
+  - "NAN"
+  canonical: "NAN"
+- aliases:
+  - "NEXTEM"
+  canonical: "NEXTEM"
+- aliases:
+  - "NIO"
+  canonical: "NIO"
+- aliases:
+  - "NISSAN"
+  canonical: "NISSAN"
+- aliases:
+  - "NIU"
+  canonical: "NIU"
+- aliases:
+  - "ODES"
+  canonical: "ODES"
+- aliases:
+  - "OPEL"
+  canonical: "OPEL"
+- aliases:
+  - "OVERIG"
+  canonical: "OVERIG"
+- aliases:
+  - "PEGASUS"
+  canonical: "PEGASUS"
+- aliases:
+  - "PEUGEOT"
+  canonical: "PEUGEOT"
+- aliases:
+  - "PHATFOUR"
+  canonical: "PHATFOUR"
+- aliases:
+  - "PIAGGIO"
+  canonical: "PIAGGIO"
+- aliases:
+  - "POLESTAR"
+  canonical: "POLESTAR"
+- aliases:
+  - "PONTIAC"
+  canonical: "PONTIAC"
+- aliases:
+  - "PORSCHE"
+  canonical: "PORSCHE"
+- aliases:
+  - "POSSL"
+  canonical: "POSSL"
+- aliases:
+  - "QUADRO"
+  canonical: "QUADRO"
+- aliases:
+  - "QWIC"
+  canonical: "QWIC"
+- aliases:
+  - "RENAULT"
+  canonical: "RENAULT"
+- aliases:
+  - "REPUBLIC DUTCH"
+  canonical: "REPUBLIC DUTCH"
+- aliases:
+  - "RIESE & MULLER"
+  - "RIESE MULLER"
+  canonical: "RIESE & MULLER"
+- aliases:
+  - "RIH"
+  canonical: "RIH"
+- aliases:
+  - "ROLLS ROYCE"
+  canonical: "ROLLS ROYCE"
+- aliases:
+  - "SAAB"
+  canonical: "SAAB"
+- aliases:
+  - "SANTANA"
+  canonical: "SANTANA"
+- aliases:
+  - "SCOTT"
+  canonical: "SCOTT"
+- aliases:
+  - "SEAT"
+  canonical: "SEAT"
+- aliases:
+  - "SERES"
+  canonical: "SERES"
+- aliases:
+  - "SKODA"
+  - "ŠKODA"
+  canonical: "SKODA"
+- aliases:
+  - "SKYWELL"
+  canonical: "SKYWELL"
+- aliases:
+  - "SMART"
+  canonical: "SMART"
+- aliases:
+  - "SON"
+  canonical: "SON"
+- aliases:
+  - "SPARTA"
+  canonical: "SPARTA"
+- aliases:
+  - "SPECIALIZED"
+  canonical: "SPECIALIZED"
+- aliases:
+  - "SSANGYONG"
+  canonical: "SSANGYONG"
+- aliases:
+  - "STELLA"
+  canonical: "STELLA"
+- aliases:
+  - "STEVENS"
+  canonical: "STEVENS"
+- aliases:
+  - "STIHL"
+  canonical: "STIHL"
+- aliases:
+  - "STREETSCOOTER"
+  canonical: "STREETSCOOTER"
+- aliases:
+  - "STROMER"
+  canonical: "STROMER"
+- aliases:
+  - "SUBARU"
+  canonical: "SUBARU"
+- aliases:
+  - "SUNRIDER"
+  canonical: "SUNRIDER"
+- aliases:
+  - "SUPER73"
+  canonical: "SUPER73"
+- aliases:
+  - "SUZUKI"
+  canonical: "SUZUKI"
+- aliases:
+  - "SWM"
+  canonical: "SWM"
+- aliases:
+  - "SYM"
+  canonical: "SYM"
+- aliases:
+  - "TALBOT"
+  canonical: "TALBOT"
+- aliases:
+  - "TATA"
+  canonical: "TATA"
+- aliases:
+  - "TENWAYS"
+  canonical: "TENWAYS"
+- aliases:
+  - "TESLA"
+  canonical: "TESLA"
+- aliases:
+  - "TOYOTA"
+  canonical: "TOYOTA"
+- aliases:
+  - "TREBBINER FAHRZEUGBAU"
+  canonical: "TREBBINER FAHRZEUGBAU"
+- aliases:
+  - "TREK"
+  canonical: "TREK"
+- aliases:
+  - "TRIUMPH"
+  canonical: "TRIUMPH"
+- aliases:
+  - "UMM"
+  canonical: "UMM"
+- aliases:
+  - "UNION"
+  canonical: "UNION"
+- aliases:
+  - "URBAN ARROW"
+  canonical: "URBAN ARROW"
+- aliases:
+  - "VANMOOF"
+  canonical: "VANMOOF"
+- aliases:
+  - "VASTRO"
+  canonical: "VASTRO"
+- aliases:
+  - "VAZ"
+  canonical: "VAZ"
+- aliases:
+  - "VELORETTI"
+  canonical: "VELORETTI"
+- aliases:
+  - "VESPA"
+  canonical: "VESPA"
+- aliases:
+  - "VICTORIA"
+  canonical: "VICTORIA"
+- aliases:
+  - "VOGUE"
+  canonical: "VOGUE"
+- aliases:
+  - "VOLKSWAGEN"
+  - "VW"
+  - "VOLKSWAGEN AG"
+  canonical: "VOLKSWAGEN"
+- aliases:
+  - "VOLVO"
+  canonical: "VOLVO"
+- aliases:
+  - "VW PORSCHE"
+  canonical: "VW PORSCHE"
+- aliases:
+  - "WARTBURG"
+  canonical: "WARTBURG"
+- aliases:
+  - "WT METALL"
+  canonical: "WT METALL"
+- aliases:
+  - "XEV"
+  canonical: "XEV"
+- aliases:
+  - "XPENG"
+  canonical: "XPENG"
+- aliases:
+  - "YADEA"
+  canonical: "YADEA"
+- aliases:
+  - "YAMAHA"
+  canonical: "YAMAHA"
+- aliases:
+  - "YAMARIN"
+  canonical: "YAMARIN"
