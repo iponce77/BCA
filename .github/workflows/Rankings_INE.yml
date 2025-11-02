@@ -126,28 +126,32 @@ jobs:
           python - << 'PY'
           import os, shlex
 
+          BOOL_KEY_TO_FLAG = {
+            'by_combustible': 'by-combustible',
+            'mix': 'mix-combustible',
+            'mix_combustible': 'mix-combustible',
+            'vs_prev': 'vs-prev',
+            'timeseries': 'timeseries',
+          }
+
           def parse(s):
-              if not s: return []
-              parts=[]
-              for kv in filter(None, [p.strip() for p in s.split(';')]):
-                  if '=' not in kv: 
-                      continue
-                  k,v=kv.split('=',1)
-                  k=k.strip(); v=v.strip()
-                  if not k or v=='':
-                      continue
-                  # numéricos directos
-                  if k in ('ine','anio','start','end','chunksize','top'):
-                      parts += [f'--{k}', v] if k!='ine' else ['--ine', v]
-                  # string con comillas
-                  elif k in ('mun','provincia','ccaa','marca','modelo','combustible'):
-                      parts += [f'--{k}', v]
-                  # booleanos → flags
-                  elif k in ('by_combustible','mix','mix_combustible','vs_prev','timeseries'):
-                      if v.lower()=='true':
-                          flag = {'mix':'mix-combustible','mix_combustible':'mix-combustible'}.get(k,k)
-                          parts += [f'--{flag}']
-              return parts
+            if not s: return []
+            parts=[]
+            for kv in filter(None, [p.strip() for p in s.split(';')]):
+              if '=' not in kv: 
+                continue
+              k,v=kv.split('=',1)
+              k=k.strip(); v=v.strip()
+              if not k or v=='':
+                continue
+              if k in ('ine','anio','start','end','chunksize','top'):
+                parts += [f'--{k}', v] if k!='ine' else ['--ine', v]
+              elif k in ('mun','provincia','ccaa','marca','modelo','combustible'):
+                parts += [f'--{k}', v]
+              elif k in BOOL_KEY_TO_FLAG:
+                if v.lower()=='true':
+                  parts += [f'--{BOOL_KEY_TO_FLAG[k]}']
+            return parts
 
           flags=[]
           flags += parse(os.getenv('IN_LOCATION',''))
@@ -162,17 +166,14 @@ jobs:
           if ch: flags += ['--chunksize', ch]
 
           if os.getenv('IN_DRY_RUN','false').lower()=='true':
-              flags += ['--dry-run']
+            flags += ['--dry-run']
 
           top=os.getenv('IN_TOP','')
           if top: flags += ['--top', top]
 
-          # Escapar seguro para shell
           out=' '.join(shlex.quote(x) for x in flags)
-          # Exponer como output multiline para evitar escapes raros
           with open(os.environ['GITHUB_OUTPUT'],'a') as f:
-              f.write('flags<<EOF\n'); f.write(out + '\n'); f.write('EOF\n')
-
+            f.write('flags<<EOF\n'); f.write(out + '\n'); f.write('EOF\n')
           print('FLAGS:', out)
           PY
 
