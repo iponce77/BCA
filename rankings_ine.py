@@ -174,37 +174,57 @@ def _iter_parquet(pq_path: str, f: Filters) -> pd.DataFrame:
     pf = pq.ParquetFile(pq_path)
     cols = [c for c in USECOLS if c in pf.schema.names]
     parts = []
-    # Filtro temprano por row-group cuando existan estadísticas de columnas clave
+
+    def _rg_has(col, pred, rg):
+        try:
+            cidx = pf.schema.get_field_index(col)
+            stats = rg.column(cidx).statistics
+            if stats is None:
+                return True
+            mn, mx = stats.min, stats.max
+            return pred(mn, mx)
+        except Exception:
+            return True
+
     for i in range(pf.num_row_groups):
         rg = pf.metadata.row_group(i)
-        def _rg_has(col, pred):
-            try:
-                cidx = pf.schema.get_field_index(col)
-                col_meta = rg.column(cidx).statistics
-                if col_meta is None:
-                    return True  # sin stats → no filtramos
-                mn, mx = col_meta.min, col_meta.max
-                return pred(mn, mx)
-            except Exception:
-                return True
-        # Periodo
+        # filtros gruesos por row-group (best-effort)
         passes_period = True
         if f.anio is not None and COL_ANIO in pf.schema.names:
-            passes_period = _rg_has(COL_ANIO, lambda mn,mx: (mx >= f.anio and mn <= f.anio))
+            passes_period = _rg_has(COL_ANIO, lambda mn, mx: (mx >= f.anio and mn <= f.anio), rg)
         elif f.start and f.end and COL_YYYYMM in pf.schema.names:
             s, e = f.start, f.end
-            passes_period = _rg_has(COL_YYYYMM, lambda mn,mx: (mx >= s and mn <= e))
-        # INE
+            passes_period = _rg_has(COL_YYYYMM, lambda mn, mx: (mx >= s and mn <= e), rg)
+
         passes_ine = True
         if COL_INE in pf.schema.names:
-            ine_min = min(f.ine); ine_max = max(f.ine)
-            passes_ine = _rg_has(COL_INE, lambda mn,mx: (mx >= ine_min and mn <= ine_max))
+            ine_min, ine_max = min(f.ine), max(f.ine)
+            passes_ine = _rg_has(COL_INE, lambda mn, mx: (mx >= ine_min and mn <= ine_max), rg)
+
         if not (passes_period and passes_ine):
             continue
+
+        # ← IMPORTANTE: sin types_mapper; conversión estándar y luego coerción manual
         table = pf.read_row_group(i, columns=cols)
-        df = table.to_pandas(types_mapper=lambda t: "Int64" if pa.types.is_integer(t) else None)
+        df = table.to_pandas(use_threads=True)
+
+        # Coerción segura a Int64 nullable (evita errores de tipos mixtos)
+        for c in (COL_INE, COL_ANIO, COL_YYYYMM, COL_UNIDADES):
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce").astype("Int64")
+
         parts.append(_apply_filters(df, f))
-    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=cols)
+
+    if not parts:
+        return pd.DataFrame(columns=cols)
+    out = pd.concat(parts, ignore_index=True)
+
+    # Asegura categorías después de concatenar (por si se perdieron)
+    for c in [COL_MARCA, COL_MODELO, COL_COMBUSTIBLE]:
+        if c in out.columns:
+            out[c] = out[c].astype("category")
+    return out
+
 
 def _iter_filtered(path: str, f: Filters, chunksize: Optional[int]) -> pd.DataFrame:
     ext = os.path.splitext(path)[1].lower()
