@@ -1,6 +1,5 @@
 from __future__ import annotations
-import argparse, os, logging, json, gzip  # gzip queda por si hay .zip; no usamos .csv.gz
-from pathlib import Path
+import argparse, os, logging, json, gzip
 import polars as pl
 
 import utils_io as uio
@@ -8,12 +7,11 @@ import dgt_schema as ds
 import metrics as mx
 import mappings_loader as ml
 
-
 # ---------------------------
 # CLI
 # ---------------------------
 def parse_args():
-    p = argparse.ArgumentParser(description="ETL + análisis de transmisiones DGT (prod v3, parquet-only)")
+    p = argparse.ArgumentParser(description="ETL + análisis de transmisiones DGT (prod v3)")
     p.add_argument("--input-dir", type=str, default=None)
     p.add_argument("--input-files", type=str, nargs="*", default=None)
     p.add_argument("--out-dir", type=str, required=True)
@@ -22,18 +20,9 @@ def parse_args():
     p.add_argument("--year", type=int, default=None)
     p.add_argument("--months", type=int, default=None)  # <- si None: procesa todos
 
-    # Defaults quirúrgicos según petición:
-    # - mappings en repo: BCA/union transmisiones/mappings/bca_mappings.yml
-    # - fuel_aliases.json en raíz del repo
-    # Dado que este archivo está en .../BCA/union transmisiones/, el directorio actual (THIS_DIR)
-    # es .../union transmisiones. La raíz del repo es THIS_DIR.parent.parent (…/).
-    THIS_DIR = Path(__file__).resolve().parent
-    REPO_ROOT = THIS_DIR.parent.parent  # .../<repo_root>
-    DEFAULT_MAPPINGS = THIS_DIR / "mappings" / "bca_mappings.yml"
-    DEFAULT_FUEL = REPO_ROOT / "fuel_aliases.json"
-
-    p.add_argument("--mappings-file", type=str, default=str(DEFAULT_MAPPINGS))
-    p.add_argument("--fuel-json", type=str, default=str(DEFAULT_FUEL))
+    # Defaults alineados a repo: mappings de marcas + JSON combustibles en raíz
+    p.add_argument("--mappings-file", type=str, default="BCA/union transmisiones/mappings/bca_mappings.yml")
+    p.add_argument("--fuel-json", type=str, default="fuel_aliases.json")
     p.add_argument("--whitelist-xlsx", type=str, default=None)
 
     p.add_argument("--include-tipo-vehiculo", type=str, default="")
@@ -46,31 +35,43 @@ def parse_args():
     p.add_argument("--log-level", type=str, default="INFO")
     return p.parse_args()
 
-
 # ---------------------------
 # Utilidades locales del ETL
 # ---------------------------
 def preflight(paths: list[str]) -> dict:
-    """
-    Diagnóstico rápido:
-    - Si es .parquet -> lo reporta como tal.
-    - Si es .zip -> indica que se inspeccionará el interior buscando .parquet.
-    (No se leen .csv/.csv.gz)
-    """
+    """Lee cabecera y primera fila de un .csv.gz si existe, para diagnóstico rápido."""
     for p in paths:
-        lp = p.lower()
-        if lp.endswith(".parquet"):
+        if p.lower().endswith(".csv.gz"):
+            sep, enc = ",", "utf-8"
+            try:
+                with gzip.open(p, "rb") as gz:
+                    header = gz.readline().decode(enc, errors="replace").rstrip("\n")
+                    row1 = gz.readline().decode(enc, errors="replace").rstrip("\n")
+                return {
+                    "path": p,
+                    "sep": sep,
+                    "enc": enc,
+                    "header": header.split(sep),
+                    "rows": [row1.split(sep)],
+                }
+            except Exception as e:
+                return {"path": p, "error": f"{type(e).__name__}: {e}"}
+        if p.lower().endswith(".parquet"):
             return {"path": p, "type": "parquet"}
-        if lp.endswith(".zip"):
-            return {"path": p, "type": "zip (se buscarán .parquet dentro)"}
-    return {"note": "No .parquet/.zip found for preflight"}
+    return {"note": "No .csv.gz/.parquet found for preflight"}
 
+def hdr_keep_from_file(path: str, sep: str) -> list[str]:
+    """Mantiene la cabecera original pero elimina únicamente 'MARCA'/'MODELO' (duplicadas malas)."""
+    with open(path, "r", encoding="utf-8", newline="") as f:
+        first = f.readline().replace("\r", "").replace("\n", "")
+    hdr = [h.strip() for h in first.split(sep) if h.strip()]
+    return [c for c in hdr if c not in ("MARCA", "MODELO")]
 
 def pick_last_n_by_month(paths: list[str], n: int | None) -> tuple[list[str], list[int]]:
     """
     Selecciona los últimos N archivos por YYYYMM inferido del NOMBRE.
-    - Si n es None o <=0 -> devuelve todos.
-    - Desduplica por mes: si hay varios archivos del mismo YYYYMM, se queda con el último.
+    - Si n es None o <=0 -> devuelve todos los meses disponibles.
+    - Desduplica por mes: si hay varios archivos del mismo YYYYMM, se queda con el último en orden de aparición.
     """
     pairs = []
     for p in paths:
@@ -79,17 +80,39 @@ def pick_last_n_by_month(paths: list[str], n: int | None) -> tuple[list[str], li
             pairs.append((p, int(mm)))
     if not pairs:
         return [], []
+    # Orden ascendente por YYYYMM y nos quedamos con el último archivo de cada mes
     pairs.sort(key=lambda x: x[1])
     by_month: dict[int, str] = {}
     for p, mm in pairs:
-        by_month[mm] = p
+        by_month[mm] = p  # sobreescribe, así el último archivo por mes prevalece
     months_sorted = sorted(by_month.keys())
     if not months_sorted:
         return [], []
-    picked_months = months_sorted[-n:] if (n and n > 0) else months_sorted
+    if n and n > 0:
+        picked_months = months_sorted[-n:]
+    else:
+        picked_months = months_sorted
     picked_paths = [by_month[mm] for mm in picked_months]
     return picked_paths, picked_months
 
+def _guard_annual_raw_only(paths: list[str]):
+    """
+    Evita que 'annual' procese agregados por error (p.ej. salida/rolling_12m/agg_transmisiones.parquet).
+    Lanza un error claro si detecta un agregado entre las entradas.
+    """
+    markers = ("agg_transmisiones.parquet", "agg_transmisiones.csv",
+               "agg_transmisiones_ine.parquet", "agg_transmisiones_ine.csv")
+    bad = []
+    for p in paths:
+        base = os.path.basename(p).lower()
+        if any(m in base for m in markers) or ("/salida/" in p.lower()) or ("\\salida\\" in p.lower()):
+            bad.append(p)
+    if bad:
+        raise SystemExit(
+            "❌ 'annual' solo acepta ficheros CRUDOS (mensuales DGT). "
+            f"Se detectaron agregados en la entrada:\n - " + "\n - ".join(bad) +
+            "\nUsa --input-dir work/dgt_monthly_parquet (no la carpeta 'salida/')."
+        )
 
 # ---------------------------
 # Export por periodo + report
@@ -103,57 +126,72 @@ def export_for_period(
     df_all_ine: pl.DataFrame | None = None
 ):
     os.makedirs(out_dir, exist_ok=True)
+    logging.info(f"📦 Escribiendo artefactos en: {out_dir}")
 
     df_period = mx.filter_period(df_all, start, end)
     if df_period.is_empty():
         raise SystemExit(f"Sin datos en periodo {start}→{end}.")
 
     # Ficheros principales (ESP)
-    df_period.write_parquet(os.path.join(out_dir, "agg_transmisiones.parquet"))
-    df_period.write_csv(os.path.join(out_dir, "agg_transmisiones.csv"))
+    out_main_pq = os.path.join(out_dir, "agg_transmisiones.parquet")
+    out_main_csv = os.path.join(out_dir, "agg_transmisiones.csv")
+    df_period.write_parquet(out_main_pq)
+    df_period.write_csv(out_main_csv)
+    logging.info(f"  ↳ {out_main_pq}")
+    logging.info(f"  ↳ {out_main_csv}")
 
     # INE (si se facilitó)
     if df_all_ine is not None and "yyyymm" in df_all_ine.columns:
         df_ine_period = mx.filter_period(df_all_ine, start, end)
         if not df_ine_period.is_empty():
-            df_ine_period.write_parquet(os.path.join(out_dir, "agg_transmisiones_ine.parquet"))
-            df_ine_period.write_csv(os.path.join(out_dir, "agg_transmisiones_ine.csv"))
+            out_ine_pq = os.path.join(out_dir, "agg_transmisiones_ine.parquet")
+            out_ine_csv = os.path.join(out_dir, "agg_transmisiones_ine.csv")
+            df_ine_period.write_parquet(out_ine_pq)
+            df_ine_period.write_csv(out_ine_csv)
+            logging.info(f"  ↳ {out_ine_pq}")
+            logging.info(f"  ↳ {out_ine_csv}")
 
     # Rankings y resúmenes
     try:
         summary = mx.summarize(df_all, start, end, focus_prov=args.focus_prov, top_n=20)
+        # Ranks (España)
         if "rank_marcas_es" in summary:
-            summary["rank_marcas_es"].write_csv(os.path.join(out_dir, "rank_marcas.csv"))
+            path = os.path.join(out_dir, "rank_marcas.csv"); summary["rank_marcas_es"].write_csv(path); logging.info(f"  ↳ {path}")
         if "rank_modelos_es" in summary:
-            summary["rank_modelos_es"].write_csv(os.path.join(out_dir, "rank_modelos.csv"))
+            path = os.path.join(out_dir, "rank_modelos.csv"); summary["rank_modelos_es"].write_csv(path); logging.info(f"  ↳ {path}")
         if "rank_provincias" in summary:
-            summary["rank_provincias"].write_csv(os.path.join(out_dir, "rank_provincias.csv"))
+            path = os.path.join(out_dir, "rank_provincias.csv"); summary["rank_provincias"].write_csv(path); logging.info(f"  ↳ {path}")
         if "rank_combustible" in summary:
-            summary["rank_combustible"].write_csv(os.path.join(out_dir, "rank_combustible.csv"))
+            path = os.path.join(out_dir, "rank_combustible.csv"); summary["rank_combustible"].write_csv(path); logging.info(f"  ↳ {path}")
         if "mix_comb_prov" in summary:
-            summary["mix_comb_prov"].write_csv(os.path.join(out_dir, "mix_combustible_provincia.csv"))
+            path = os.path.join(out_dir, "mix_combustible_provincia.csv"); summary["mix_comb_prov"].write_csv(path); logging.info(f"  ↳ {path}")
         if "period_df" in summary:
-            summary["period_df"].write_parquet(os.path.join(out_dir, "keys_for_join.parquet"))
+            path = os.path.join(out_dir, "keys_for_join.parquet"); summary["period_df"].write_parquet(path); logging.info(f"  ↳ {path}")
     except Exception as e:
         logging.warning("No se pudo generar el informe/resúmenes: %s", e)
 
-
 # ---------------------------
-# Proceso principal (SOLO PARQUET)
+# Proceso principal
 # ---------------------------
 def process_all(args):
     uio.setup_logging(args.log_level)
+    logging.info("⚙️  Modo: %s", args.mode)
+    logging.info("📥  Entrada: dir=%s files=%s", args.input_dir, args.input_files)
+    logging.info("📤  Salida base: %s", args.out_dir)
 
-    # Filtrar explícitamente a parquet/zip desde la enumeración de entrada
-    all_paths = uio.iter_input_files(args.input_dir, args.input_files)
-    paths = [p for p in all_paths if p.lower().endswith((".parquet", ".zip"))]
+    paths = uio.iter_input_files(args.input_dir, args.input_files)
     if not paths:
-        raise SystemExit("No hay ficheros de entrada .parquet o .zip (con .parquet dentro).")
+        raise SystemExit("No hay ficheros de entrada (.zip/.csv.gz/.csv/.parquet)")
+
+    if args.mode == "annual":
+        _guard_annual_raw_only(paths)
 
     logging.info(f"Preflight: {preflight(paths)}")
 
+    # Si mode=rolling y se especifica months (o incluso si es None, queremos selección por archivos):
     selected_months_for_files: list[int] = []
     if args.mode == "rolling":
+        # Si months es None -> procesa todos los archivos disponibles (no recorte por N)
         paths, selected_months_for_files = pick_last_n_by_month(paths, args.months if args.months else None)
         if not paths:
             raise SystemExit("No se pudieron inferir meses de los nombres de archivo. Esperado YYYYMM en el nombre.")
@@ -162,55 +200,76 @@ def process_all(args):
             f"{selected_months_for_files[0]}–{selected_months_for_files[-1]}" if selected_months_for_files else "(todos)"
         )
 
-    # Diccionarios (mappings + fuel desde rutas pedidas)
+    # Diccionarios
     maps = ml.load_all(args.mappings_file, args.fuel_json, args.whitelist_xlsx)
     logging.info(f"Diccionarios: brands={maps['brands_n']} fuels={maps['fuels_n']}")
 
-    tmp_dir = os.path.join(args.out_dir, "_tmp_zip")
+    tmp_dir = os.path.join(args.out_dir, "_tmp_utf8")
     os.makedirs(tmp_dir, exist_ok=True)
 
     agg_months: list[pl.DataFrame] = []
     agg_months_ine: list[pl.DataFrame] = []
     months_seen: list[int | None] = []
-    include_tipos = [s.strip() for s in (args.include_tipo_vehiculo or "").split(",") if s.strip()]
+    # Interpretación: 'true/yes/on/1' => no filtrar; 'false/no/off/0' => no filtrar; lista => filtrar por tokens
+    raw_inc = (args.include_tipo_vehiculo or "").strip()
+    if raw_inc.lower() in ("true","1","yes","on"):
+        include_tipos = []
+    elif raw_inc.lower() in ("false","0","no","off",""):
+        include_tipos = []
+    else:
+        include_tipos = [s.strip() for s in raw_inc.split(",") if s.strip()]
 
-    # --- Ingesta de cada archivo seleccionado (solo parquet o zip con parquet) ---
+    # --- Ingesta de cada archivo seleccionado ---
     for p in paths:
-        lp = p.lower()
-
-        if lp.endswith(".zip"):
+        if p.lower().endswith(".zip"):
             for inner in uio.unzip_to_tmp(p, tmp_dir):
-                if not inner.lower().endswith(".parquet"):
-                    continue
                 m = uio.infer_yyyymm_from_name(inner) or uio.infer_yyyymm_from_name(p)
                 months_seen.append(m)
 
-                lf_raw = pl.scan_parquet(inner)
-                lf = ds.standardize_lazyframe(
-                    lf_raw,
-                    yyyymm_hint=m,
-                    brands_map=maps["brands_df"],
-                    fuels_map=maps["fuels_df"]
-                )
+                if inner.lower().endswith(".parquet"):
+                    lf_raw = pl.scan_parquet(inner)
+                elif inner.lower().endswith(".csv.gz"):
+                    csv_path, sep, enc = uio.transcode_gz_to_utf8_tmp(inner, tmp_dir)
+                    lf0 = pl.scan_csv(csv_path, separator=sep, infer_schema_length=8000, ignore_errors=True)
+                    cols = hdr_keep_from_file(csv_path, sep)
+                    lf_raw = lf0.select(cols)
+                elif inner.lower().endswith(".csv"):
+                    lf0 = pl.scan_csv(inner, separator=",", infer_schema_length=8000, ignore_errors=True)
+                    cols = hdr_keep_from_file(inner, ",")
+                    lf_raw = lf0.select(cols)
+                else:
+                    continue
+
+                lf = ds.standardize_lazyframe(lf_raw, yyyymm_hint=m, brands_map=maps["brands_df"], fuels_map=maps["fuels_df"])
                 agg_months.append(mx.aggregate_month(lf, include_tipos))
                 agg_months_ine.append(mx.aggregate_month_ine(lf, include_tipos))
 
-        elif lp.endswith(".parquet"):
-            m = uio.infer_yyyymm_from_name(p)
-            months_seen.append(m)
-
-            lf_raw = pl.scan_parquet(p)
-            lf = ds.standardize_lazyframe(
-                lf_raw,
-                yyyymm_hint=m,
-                brands_map=maps["brands_df"],
-                fuels_map=maps["fuels_df"]
-            )
+        elif p.lower().endswith(".csv.gz"):
+            m = uio.infer_yyyymm_from_name(p); months_seen.append(m)
+            csv_path, sep, enc = uio.transcode_gz_to_utf8_tmp(p, tmp_dir)
+            lf0 = pl.scan_csv(csv_path, separator=sep, infer_schema_length=8000, ignore_errors=True)
+            cols = hdr_keep_from_file(csv_path, sep)
+            lf_raw = lf0.select(cols)
+            lf = ds.standardize_lazyframe(lf_raw, yyyymm_hint=m, brands_map=maps["brands_df"], fuels_map=maps["fuels_df"])
             agg_months.append(mx.aggregate_month(lf, include_tipos))
             agg_months_ine.append(mx.aggregate_month_ine(lf, include_tipos))
 
+        elif p.lower().endswith(".csv"):
+            m = uio.infer_yyyymm_from_name(p); months_seen.append(m)
+            lf0 = pl.scan_csv(p, separator=",", infer_schema_length=8000, ignore_errors=True)
+            cols = hdr_keep_from_file(p, ",")
+            lf_raw = lf0.select(cols)
+            lf = ds.standardize_lazyframe(lf_raw, yyyymm_hint=m, brands_map=maps["brands_df"], fuels_map=maps["fuels_df"])
+            agg_months.append(mx.aggregate_month(lf, include_tipos))
+            agg_months_ine.append(mx.aggregate_month_ine(lf, include_tipos))
+
+        elif p.lower().endswith(".parquet"):
+            m = uio.infer_yyyymm_from_name(p); months_seen.append(m)
+            lf_raw = pl.scan_parquet(p)
+            lf = ds.standardize_lazyframe(lf_raw, yyyymm_hint=m, brands_map=maps["brands_df"], fuels_map=maps["fuels_df"])
+            agg_months.append(mx.aggregate_month(lf, include_tipos))
+            agg_months_ine.append(mx.aggregate_month_ine(lf, include_tipos))
         else:
-            # Por diseño no llegamos aquí: sólo .parquet/.zip
             continue
 
     if not agg_months:
@@ -253,27 +312,30 @@ def process_all(args):
         end = year * 100 + 12
         if df_all.filter(pl.col("yyyymm").is_between(start, end)).height == 0:
             raise ValueError(f"No hay meses para {year}")
-        export_for_period(df_all, start, end, args, os.path.join(args.out_dir, f"{year}"), df_all_ine=df_all_ine)
+        out_dir = os.path.join(args.out_dir, f"{year}")
+        logging.info(f"🧭 Annual ⇒ {start}–{end}  → {out_dir}")
+        export_for_period(df_all, start, end, args, out_dir, df_all_ine=df_all_ine)
 
     elif args.mode == "rolling":
+        # Hemos preseleccionado los archivos (y meses) mediante pick_last_n_by_month
         if selected_months_for_files:
             start = int(min(selected_months_for_files))
             end = int(max(selected_months_for_files))
         else:
             start = int(df_all["yyyymm"].min())
             end = int(df_all["yyyymm"].max())
-        export_for_period(df_all, start, end, args, os.path.join(args.out_dir, f"rolling_{args.months or 'all'}m"), df_all_ine=df_all_ine)
+        out_dir = os.path.join(args.out_dir, f"rolling_{args.months or 'all'}m")
+        logging.info(f"🧭 Rolling ⇒ {start}–{end}  → {out_dir}")
+        export_for_period(df_all, start, end, args, out_dir, df_all_ine=df_all_ine)
 
     else:
         raise ValueError("Mode no reconocido.")
 
     uio.cleanup_tmp(tmp_dir)
 
-
 def main():
     args = parse_args()
     process_all(args)
-
 
 if __name__ == "__main__":
     main()
