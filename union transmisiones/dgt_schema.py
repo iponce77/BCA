@@ -103,7 +103,7 @@ def yyyymm_from_sources(yyyymm_hint: int | None) -> pl.Expr:
     return pl.coalesce([trans, fname, hint]).alias("yyyymm")
 
 def year_from_yyyymm(expr: pl.Expr) -> pl.Expr:
-    return pl.floor(expr.cast(pl.Float64) / 100.0).cast(pl.Int64)
+    return (expr.cast(pl.Int64) // pl.lit(100)).cast(pl.Int64)
 
 # ------------------------------------------------------------
 # Estandarización principal
