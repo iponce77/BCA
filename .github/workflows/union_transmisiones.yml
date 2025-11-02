@@ -1,24 +1,69 @@
-name: Union Transmisiones - Cloud
+name: union-transmisiones
 
 on:
+  push:
+    branches: [ main, master ]
   workflow_dispatch:
     inputs:
       months:
-        description: 'N últimos meses (rolling)'
+        description: "N meses a descargar/usar para rolling por defecto"
         required: false
-        default: '12'
+        default: "12"
       latest_yyyymm:
-        description: 'Forzar último YYYYMM. Si vacío, autodetecta.'
+        description: "Límite superior de YYYYMM (opcional, ej. 202509)"
         required: false
-        default: ''
+        default: ""
+      also_24m:
+        description: "Ejecutar además rolling 24 meses"
+        required: false
+        default: "false"
+      run_annual:
+        description: "Ejecutar modo annual (descarga meses del año)"
+        required: false
+        default: "false"
+      annual_year:
+        description: "Año natural para annual (si run_annual=true)"
+        required: false
+        default: "2025"
+
+concurrency:
+  group: union-transmisiones
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   union-transmisiones:
     runs-on: ubuntu-latest
+
     env:
+      TZ: Europe/Madrid
+
+      # === Secrets/env reales del repo ===
       DGT_PARQUET_FOLDER_ID: ${{ secrets.DGT_PARQUET_FOLDER_ID }}
       GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64 }}
       GOOGLE_DRIVE_SCOPE: https://www.googleapis.com/auth/drive.file
+
+      # Carpeta destino de uploads (puedes usar la misma para 12m/24m/annual)
+      BCA_MONTHLY_FOLDER_ID: ${{ secrets.BCA_MONTHLY_FOLDER_ID }}
+
+      # === Inputs con defaults para 'push' ===
+      INPUT_MONTHS: ${{ github.event.inputs.months || '12' }}
+      INPUT_LATEST_YYYYMM: ${{ github.event.inputs.latest_yyyymm || '' }}
+      ALSO_24M: ${{ github.event.inputs.also_24m || 'false' }}
+      RUN_ANNUAL: ${{ github.event.inputs.run_annual || 'false' }}
+      ANNUAL_YEAR: ${{ github.event.inputs.annual_year || '2025' }}
+
+      # === Rutas de trabajo ===
+      DGT_INPUT_DIR: work/dgt_monthly_parquet
+      ROLLING_12_OUT_DIR: salida/rolling_12m
+      ROLLING_24_OUT_DIR: salida/rolling_24m
+
+      # Diccionarios (según tu repo)
+      MAPPINGS_FILE: BCA/union transmisiones/mappings/bca_mappings.yml
+      FUEL_JSON: fuel_aliases.json
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,32 +77,36 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install pyarrow polars google-api-python-client google-auth-httplib2 google-auth-oauthlib requests beautifulsoup4 openpyxl
+          # Núcleo científico + Google API + Excel + YAML
+          pip install "polars>=0.20.30,<0.21" pyarrow pandas pyyaml \
+                      google-api-python-client google-auth-httplib2 google-auth-oauthlib \
+                      requests beautifulsoup4 openpyxl
 
       - name: Prepare workspace
         run: |
-          mkdir -p work/dgt_monthly_parquet
+          mkdir -p "${{ env.DGT_INPUT_DIR }}"
           mkdir -p salida
+          python -V
 
-
-      - name: Download last N dgt_transmisiones_*.parquet (DGT_PARQUET_FOLDER_ID)
+      # ========= ROLLING 12M (por defecto) =========
+      - name: Download last N dgt_transmisiones_*.parquet (Drive → $DGT_INPUT_DIR)
         env:
           PYTHONPATH: ${{ github.workspace }}
-          DGT_PARQUET_FOLDER_ID: ${{ secrets.DGT_PARQUET_FOLDER_ID }}
-          INPUT_MONTHS: ${{ github.event.inputs.months }}
-          INPUT_LATEST_YYYYMM: ${{ github.event.inputs.latest_yyyymm }}
         run: |
           python - << 'PY'
           from pathlib import Path
           from googleapiclient.http import MediaIoBaseDownload
           from gdrive_auth import authenticate_drive
           import io, os, re, sys
+
           FOLDER_ID = os.environ["DGT_PARQUET_FOLDER_ID"]
-          OUTDIR = Path("work/dgt_monthly_parquet")
+          OUTDIR = Path(os.environ.get("DGT_INPUT_DIR","work/dgt_monthly_parquet"))
           OUTDIR.mkdir(parents=True, exist_ok=True)
+
           N = int(os.environ.get("INPUT_MONTHS") or "12")
           LATEST = os.environ.get("INPUT_LATEST_YYYYMM") or ""
           pat = re.compile(r"^(?:resultado_mensual_trf|dgt_transmisiones)_(\d{6})\.parquet$", re.I)
+
           svc = authenticate_drive()
           resp = svc.files().list(
               q=f"'{FOLDER_ID}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'",
@@ -65,7 +114,8 @@ jobs:
               pageSize=1000,
               includeItemsFromAllDrives=True, supportsAllDrives=True
           ).execute()
-          files = resp.get("files", [])
+          files = resp.get("files", []) or []
+
           items = []
           for f in files:
               m = pat.match(f["name"])
@@ -74,6 +124,8 @@ jobs:
                   items.append((yyyymm, f["id"], f["name"]))
           if not items:
               sys.exit("⛔ No se encontraron resultado_mensual_trf_* o dgt_transmisiones_*.parquet en la carpeta DGT.")
+
+          # Orden descendente por YYYYMM y deduplicación por mes (si hubiera duplicados)
           items.sort(key=lambda x: x[0], reverse=True)
           if LATEST:
               try:
@@ -81,9 +133,15 @@ jobs:
                   items = [it for it in items if it[0] <= lim]
               except ValueError:
                   pass
-          pick = items[:N]
+          seen=set(); dedup=[]
+          for y,fid,name in items:
+              if y in seen: continue
+              seen.add(y); dedup.append((y,fid,name))
+
+          pick = dedup[:N]
           if not pick:
               sys.exit("⛔ Selección vacía tras aplicar filtros.")
+
           for yyyymm, fid, name in pick:
               req = svc.files().get_media(fileId=fid)
               buf = io.BytesIO()
@@ -96,33 +154,235 @@ jobs:
           print(f"Descargados {len(pick)} mensuales a {OUTDIR}")
           PY
 
-      - name: Run Unión Transmisiones (rolling)
-        env:
-          PYTHONPATH: ${{ github.workspace }}
+      - name: Debug → listar entrada (12m)
+        run: |
+          ls -l "${{ env.DGT_INPUT_DIR }}" || true
+
+      - name: Rolling 12 meses
         run: |
           python "union transmisiones/etl_transmisiones.py" \
-            --input-dir "work/dgt_monthly_parquet" \
             --mode rolling \
-            --months "${{ github.event.inputs.months }}" \
+            --input-dir "${{ env.DGT_INPUT_DIR }}" \
             --out-dir "salida" \
-            --mappings-file "${{ github.workspace }}/union transmisiones/mappings/bca_mappings.yml" \
-            --fuel-json "${{ github.workspace }}/fuel_aliases.json" \
-            --whitelist-xlsx "" \
+            --months "${{ env.INPUT_MONTHS }}" \
+            --include-tipo-vehiculo true \
+            --low-support-threshold 0 \
+            --mappings-file "${{ env.MAPPINGS_FILE }}" \
+            --fuel-json "${{ env.FUEL_JSON }}" \
             --log-level INFO
+          echo "Contenido salida/rolling_12m:"
+          ls -l "${{ env.ROLLING_12_OUT_DIR }}" || true
 
-      - name: Upload outputs to Drive (BCA_MONTHLY_FOLDER_ID)
+      - name: Upload rolling 12m → Drive (BCA_MONTHLY_FOLDER_ID)
         env:
           PYTHONPATH: ${{ github.workspace }}
-          BCA_MONTHLY_FOLDER_ID: ${{ secrets.BCA_MONTHLY_FOLDER_ID }}
         run: |
-          ls -l salida || true
           python scripts/upload_monthly.py \
             --folder "$BCA_MONTHLY_FOLDER_ID" \
-            --files "salida/agg_transmisiones.parquet,salida/agg_transmisiones_ine.parquet"
+            --files "salida/rolling_12m/agg_transmisiones.parquet,salida/rolling_12m/agg_transmisiones_ine.parquet"
 
-      - name: Upload outputs as artifact (fallback)
-        if: always()
+      - name: Upload rolling 12m → Artifact (fallback)
         uses: actions/upload-artifact@v4
         with:
-          name: union-transmisiones-output
-          path: salida/*.parquet
+          name: union-transmisiones-rolling-12m
+          path: |
+            ${{ env.ROLLING_12_OUT_DIR }}/agg_transmisiones.parquet
+            ${{ env.ROLLING_12_OUT_DIR }}/agg_transmisiones_ine.parquet
+          if-no-files-found: warn
+
+      # ========= ROLLING 24M (opcional) =========
+      - name: Reset input dir (para 24m)
+        if: ${{ github.event_name == 'workflow_dispatch' && env.ALSO_24M == 'true' }}
+        run: |
+          rm -rf "${{ env.DGT_INPUT_DIR }}"/*
+          mkdir -p "${{ env.DGT_INPUT_DIR }}"
+
+      - name: Download last 24 dgt_transmisiones_*.parquet
+        if: ${{ github.event_name == 'workflow_dispatch' && env.ALSO_24M == 'true' }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          INPUT_MONTHS: "24"
+        run: |
+          # Reutilizamos el mismo snippet, cambiando INPUT_MONTHS=24
+          python - << 'PY'
+          from pathlib import Path
+          from googleapiclient.http import MediaIoBaseDownload
+          from gdrive_auth import authenticate_drive
+          import io, os, re, sys
+
+          FOLDER_ID = os.environ["DGT_PARQUET_FOLDER_ID"]
+          OUTDIR = Path(os.environ.get("DGT_INPUT_DIR","work/dgt_monthly_parquet"))
+          OUTDIR.mkdir(parents=True, exist_ok=True)
+
+          N = int(os.environ.get("INPUT_MONTHS") or "24")
+          LATEST = os.environ.get("INPUT_LATEST_YYYYMM") or ""
+          pat = re.compile(r"^(?:resultado_mensual_trf|dgt_transmisiones)_(\d{6})\.parquet$", re.I)
+
+          svc = authenticate_drive()
+          resp = svc.files().list(
+              q=f"'{FOLDER_ID}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'",
+              fields="files(id,name,modifiedTime,size)",
+              pageSize=1000,
+              includeItemsFromAllDrives=True, supportsAllDrives=True
+          ).execute()
+          files = resp.get("files", []) or []
+
+          items = []
+          for f in files:
+              m = pat.match(f["name"])
+              if m:
+                  yyyymm = int(m.group(1))
+                  items.append((yyyymm, f["id"], f["name"]))
+          if not items:
+              sys.exit("⛔ No se encontraron resultado_mensual_trf_* o dgt_transmisiones_*.parquet en la carpeta DGT.")
+
+          items.sort(key=lambda x: x[0], reverse=True)
+          if LATEST:
+              try:
+                  lim = int(LATEST)
+                  items = [it for it in items if it[0] <= lim]
+              except ValueError:
+                  pass
+          seen=set(); dedup=[]
+          for y,fid,name in items:
+              if y in seen: continue
+              seen.add(y); dedup.append((y,fid,name))
+
+          pick = dedup[:N]
+          if not pick:
+              sys.exit("⛔ Selección vacía tras aplicar filtros.")
+
+          for yyyymm, fid, name in pick:
+              req = svc.files().get_media(fileId=fid)
+              buf = io.BytesIO()
+              dl = MediaIoBaseDownload(buf, req)
+              done = False
+              while not done:
+                  _, done = dl.next_chunk()
+              (OUTDIR / name).write_bytes(buf.getvalue())
+              print(f"✅ {name}")
+          print(f"Descargados {len(pick)} mensuales a {OUTDIR}")
+          PY
+
+      - name: Rolling 24 meses
+        if: ${{ github.event_name == 'workflow_dispatch' && env.ALSO_24M == 'true' }}
+        run: |
+          python "union transmisiones/etl_transmisiones.py" \
+            --mode rolling \
+            --input-dir "${{ env.DGT_INPUT_DIR }}" \
+            --out-dir "salida" \
+            --months 24 \
+            --include-tipo-vehiculo true \
+            --low-support-threshold 0 \
+            --mappings-file "${{ env.MAPPINGS_FILE }}" \
+            --fuel-json "${{ env.FUEL_JSON }}" \
+            --log-level INFO
+          echo "Contenido salida/rolling_24m:"
+          ls -l "${{ env.ROLLING_24_OUT_DIR }}" || true
+
+      - name: Upload rolling 24m → Drive (BCA_MONTHLY_FOLDER_ID)
+        if: ${{ github.event_name == 'workflow_dispatch' && env.ALSO_24M == 'true' }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python scripts/upload_monthly.py \
+            --folder "$BCA_MONTHLY_FOLDER_ID" \
+            --files "salida/rolling_24m/agg_transmisiones.parquet,salida/rolling_24m/agg_transmisiones_ine.parquet"
+
+      - name: Upload rolling 24m → Artifact (fallback)
+        if: ${{ github.event_name == 'workflow_dispatch' && env.ALSO_24M == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: union-transmisiones-rolling-24m
+          path: |
+            ${{ env.ROLLING_24_OUT_DIR }}/agg_transmisiones.parquet
+            ${{ env.ROLLING_24_OUT_DIR }}/agg_transmisiones_ine.parquet
+          if-no-files-found: warn
+
+      # ========= ANNUAL (opcional, siempre desde CRUDOS) =========
+      - name: Reset input dir (para annual)
+        if: ${{ github.event_name == 'workflow_dispatch' && env.RUN_ANNUAL == 'true' }}
+        run: |
+          rm -rf "${{ env.DGT_INPUT_DIR }}"/*
+          mkdir -p "${{ env.DGT_INPUT_DIR }}"
+
+      - name: Download YYYY01..YYYY12 (Drive → $DGT_INPUT_DIR)
+        if: ${{ github.event_name == 'workflow_dispatch' && env.RUN_ANNUAL == 'true' }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python - << 'PY'
+          from pathlib import Path
+          from googleapiclient.http import MediaIoBaseDownload
+          from gdrive_auth import authenticate_drive
+          import io, os, re, sys
+
+          YEAR = int(os.environ.get("ANNUAL_YEAR") or "2025")
+          FOLDER_ID = os.environ["DGT_PARQUET_FOLDER_ID"]
+          OUTDIR = Path(os.environ.get("DGT_INPUT_DIR","work/dgt_monthly_parquet"))
+          OUTDIR.mkdir(parents=True, exist_ok=True)
+
+          pat = re.compile(rf"^(?:resultado_mensual_trf|dgt_transmisiones)_{YEAR}(0[1-9]|1[0-2])\.parquet$", re.I)
+          svc = authenticate_drive()
+          resp = svc.files().list(
+              q=f"'{FOLDER_ID}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'",
+              fields="files(id,name,modifiedTime,size)",
+              pageSize=1000,
+              includeItemsFromAllDrives=True, supportsAllDrives=True
+          ).execute()
+          files = resp.get("files", []) or []
+
+          items = []
+          for f in files:
+              if pat.match(f["name"]):
+                  items.append((f["name"], f["id"]))
+
+          if not items:
+              sys.exit(f"⛔ No hay mensuales para el año {YEAR} en la carpeta DGT.")
+
+          for name, fid in sorted(items):
+              req = svc.files().get_media(fileId=fid)
+              buf = io.BytesIO()
+              dl = MediaIoBaseDownload(buf, req)
+              done = False
+              while not done:
+                  _, done = dl.next_chunk()
+              (OUTDIR / name).write_bytes(buf.getvalue())
+              print(f"✅ {name}")
+          print(f"Descargados {len(items)} mensuales del {YEAR} a {OUTDIR}")
+          PY
+
+      - name: Annual (modo natural)
+        if: ${{ github.event_name == 'workflow_dispatch' && env.RUN_ANNUAL == 'true' }}
+        run: |
+          python "union transmisiones/etl_transmisiones.py" \
+            --mode annual \
+            --input-dir "${{ env.DGT_INPUT_DIR }}" \
+            --out-dir "salida" \
+            --year "${{ env.ANNUAL_YEAR }}" \
+            --include-tipo-vehiculo true \
+            --low-support-threshold 0 \
+            --mappings-file "${{ env.MAPPINGS_FILE }}" \
+            --fuel-json "${{ env.FUEL_JSON }}" \
+            --log-level INFO
+          echo "Contenido salida/${{ env.ANNUAL_YEAR }}:"
+          ls -l "salida/${{ env.ANNUAL_YEAR }}" || true
+
+      - name: Upload annual → Drive (BCA_MONTHLY_FOLDER_ID)
+        if: ${{ github.event_name == 'workflow_dispatch' && env.RUN_ANNUAL == 'true' }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python scripts/upload_monthly.py \
+            --folder "$BCA_MONTHLY_FOLDER_ID" \
+            --files "salida/${{ env.ANNUAL_YEAR }}/agg_transmisiones.parquet,salida/${{ env.ANNUAL_YEAR }}/agg_transmisiones_ine.parquet"
+
+      - name: Upload annual → Artifact (fallback)
+        if: ${{ github.event_name == 'workflow_dispatch' && env.RUN_ANNUAL == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: union-transmisiones-annual-${{ env.ANNUAL_YEAR }}
+          path: |
+            salida/${{ env.ANNUAL_YEAR }}/agg_transmisiones.parquet
+            salida/${{ env.ANNUAL_YEAR }}/agg_transmisiones_ine.parquet
+          if-no-files-found: warn
