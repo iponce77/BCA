@@ -110,9 +110,6 @@ jobs:
           print(f"✅ Descargado {name}")
           PY
 
-      - name: Ensure municipios_ine.csv exists
-        run: |
-          test -f data/municipios_ine.csv || (echo "⛔ Falta data/municipios_ine.csv" && exit 1)
 
       - name: Build CLI flags from compact inputs
         id: flags
@@ -163,7 +160,7 @@ jobs:
 
       - name: Run rankings_ine.py (Parquet input)
         env:
-          MUNICIPIOS_INE_CSV: data/municipios_ine.csv
+          MUNICIPIOS_INE_CSV: municipios_ine.csv
         run: |
           INP="$(ls -1 *.parquet | head -n1)"
           echo "Usando Parquet: $INP"
