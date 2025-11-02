@@ -131,7 +131,7 @@ def standardize_lazyframe(
     modelo_src = pl.coalesce([pl.col("modelo_base"), pl.col("modelo")]).alias("_modelo_src")
     lf = lf.with_columns([norm_upper(marca_src).alias("_marca_alias_norm"),
                           norm_upper(modelo_src).alias("_modelo_norm")])
-
+    lf = lf.with_columns(pl.lit(None, dtype=pl.Utf8).alias("marca_normalizada"))
     if brands_map is not None and brands_map.height > 0:
         lf = (
             lf.join(
