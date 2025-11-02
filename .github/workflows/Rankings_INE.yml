@@ -124,21 +124,21 @@ jobs:
               k="$(echo "$k" | xargs)"; v="$(echo "$v" | xargs)"
               [[ -z "${k:-}" || -z "${v:-}" ]] && continue
               case "$k" in
-                ine) FLAGS="$FLAGS --ine $v" ;;
-                mun) FLAGS="$FLAGS --mun '$v'" ;;
-                provincia) FLAGS="$FLAGS --provincia '$v'" ;;
-                ccaa) FLAGS="$FLAGS --ccaa '$v'" ;;
-                anio) FLAGS="$FLAGS --anio $v" ;;
-                start) FLAGS="$FLAGS --start $v" ;;
-                end) FLAGS="$FLAGS --end $v" ;;
-                marca) FLAGS="$FLAGS --marca '$v'" ;;
-                modelo) FLAGS="$FLAGS --modelo '$v'" ;;
-                combustible) FLAGS="$FLAGS --combustible '$v'" ;;
-                by_combustible) [[ "$v" == "true" ]] && FLAGS="$FLAGS --by-combustible" ;;
-                mix|mix_combustible) [[ "$v" == "true" ]] && FLAGS="$FLAGS --mix-combustible" ;;
-                vs_prev) [[ "$v" == "true" ]] && FLAGS="$FLAGS --vs-prev" ;;
-                timeseries) [[ "$v" == "true" ]] && FLAGS="$FLAGS --timeseries" ;;
-                chunksize) [[ -n "$v" ]] && FLAGS="$FLAGS --chunksize $v" ;;
+                ine) FLAGS+=" --ine $v" ;;
+                mun) FLAGS+=" --mun \"$v\"" ;;
+                provincia) FLAGS+=" --provincia \"$v\"" ;;
+                ccaa) FLAGS+=" --ccaa \"$v\"" ;;
+                anio) FLAGS+=" --anio $v" ;;
+                start) FLAGS+=" --start $v" ;;
+                end) FLAGS+=" --end $v" ;;
+                marca) FLAGS+=" --marca \"$v\"" ;;
+                modelo) FLAGS+=" --modelo \"$v\"" ;;
+                combustible) FLAGS+=" --combustible \"$v\"" ;;
+                by_combustible) [[ "$v" == "true" ]] && FLAGS+=" --by-combustible" ;;
+                mix|mix_combustible) [[ "$v" == "true" ]] && FLAGS+=" --mix-combustible" ;;
+                vs_prev) [[ "$v" == "true" ]] && FLAGS+=" --vs-prev" ;;
+                timeseries) [[ "$v" == "true" ]] && FLAGS+=" --timeseries" ;;
+                chunksize) [[ -n "$v" ]] && FLAGS+=" --chunksize $v" ;;
               esac
             done
           }
@@ -148,14 +148,19 @@ jobs:
           [[ -n "${{ github.event.inputs.period }}" ]] && parse_kv "${{ github.event.inputs.period }}"
           [[ -n "${{ github.event.inputs.filters }}" ]] && parse_kv "${{ github.event.inputs.filters }}"
           [[ -n "${{ github.event.inputs.options }}" ]] && parse_kv "${{ github.event.inputs.options }}"
-          [[ -n "${{ github.event.inputs.format }}" ]] && FLAGS="$FLAGS --format ${{ github.event.inputs.format }}"
+          [[ -n "${{ github.event.inputs.format }}" ]] && FLAGS+=" --format ${{ github.event.inputs.format }}"
           [[ -n "${{ github.event.inputs.chunksize }}" ]] && parse_kv "chunksize=${{ github.event.inputs.chunksize }}"
-          [[ "${{ github.event.inputs.dry_run }}" == "true" ]] && FLAGS="$FLAGS --dry-run"
+          [[ "${{ github.event.inputs.dry_run }}" == "true" ]] && FLAGS+=" --dry-run"
 
           # top
-          FLAGS="$FLAGS --top ${{ github.event.inputs.top }}"
+          FLAGS+=" --top ${{ github.event.inputs.top }}"
 
-          echo "flags=$FLAGS" >> $GITHUB_OUTPUT
+          {
+            echo 'flags<<EOF'
+            echo "$FLAGS"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
           echo "FLAGS: $FLAGS"
 
       - name: Run rankings_ine.py (Parquet input)
