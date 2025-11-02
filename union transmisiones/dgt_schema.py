@@ -4,7 +4,7 @@ import unicodedata
 import re
 
 # ------------------------------------------------------------
-# Normalización básica
+# Helpers robustos
 # ------------------------------------------------------------
 def _strip_accents_upper(s: str) -> str:
     if s is None:
@@ -14,18 +14,29 @@ def _strip_accents_upper(s: str) -> str:
     return s.upper().strip()
 
 def norm_upper(expr: pl.Expr) -> pl.Expr:
-    return (
-        expr.cast(pl.Utf8, strict=False)
-            .map_elements(_strip_accents_upper, return_dtype=pl.Utf8)
-    )
+    return expr.cast(pl.Utf8, strict=False).map_elements(_strip_accents_upper, return_dtype=pl.Utf8)
+
+def _lf_columns(lf: pl.LazyFrame) -> list[str]:
+    # Polars <=0.20 no tiene collect_schema(); use .columns o .schema
+    try:
+        return list(lf.columns)
+    except Exception:
+        try:
+            sch = lf.schema
+            return list(getattr(sch, "names", lambda: sch.keys())())
+        except Exception:
+            return []
 
 # ------------------------------------------------------------
-# Sinónimos de columnas según el esquema DGT real aportado
+# Sinónimos según el esquema real DGT (no movemos make_clean/modelo_base)
 # ------------------------------------------------------------
 COLUMN_SYNONYMS = {
     "fecha_mat": ["fecha_mat","fecha","fecha_matriculacion","fecha matriculación","fecha primera matriculacion","f_mat"],
-    "marca": ["marca","make","fabricante","brand","make_clean"],
+    "marca": ["marca","make","fabricante","brand"],  # NO incluir make_clean (se usa aparte)
+    "make_clean": ["make_clean","marca_limpia"],
     "modelo": ["modelo","model","modelo_bare"],
+    "modelo_base": ["modelo_base","modelo canonico","modelo_canonico"],
+    "modelo_normalizado": ["modelo_normalizado","modelo_norm","model_normalized"],
     "submodelo": ["submodelo","version","versión"],
     "vin": ["vin","bastidor","num_bastidor"],
     "combustible": ["combustible","fuel","tipo_combustible"],
@@ -33,7 +44,7 @@ COLUMN_SYNONYMS = {
     "localidad": ["localidad","municipio","poblacion","población"],
     "provincia": ["provincia"],
     "tipo_vehiculo": ["tipo_vehiculo","tipo","categoria","categoría"],
-    # OJO: 'transmision' es un campo de evento/lote (puede contener YYYY-MM / nombres), NO caja de cambios
+    # 'transmision' es el evento/lote (puede traer YYYY-MM / YYYYMM / nombre de archivo). No es caja de cambios.
     "transmision": ["transmision","transmisiones","lote","evento"],
     "año_mat": ["año_mat","ano_mat","aÃ±o_mat","anio_mat"],
     "mes_mat": ["mes_mat","mes_matriculacion","mes"],
@@ -41,10 +52,6 @@ COLUMN_SYNONYMS = {
     "nombre_archivo": ["nombre_archivo","source_file","file"],
     "es_cruzable": ["es_cruzable","cruzable"],
     "codigo_provincia": ["codigo_provincia","cod_prov","ineprov","prov"],
-    "modelo_base": ["modelo_base","modelo canonico","modelo_canonico"],
-    "make_clean": ["make_clean","marca_limpia"],
-    # Clave final del join
-    "modelo_normalizado": ["modelo_normalizado","modelo_norm","model_normalized"],
 }
 
 def build_rename_map_from_names(names: list[str]) -> dict[str, str]:
@@ -63,7 +70,7 @@ def build_rename_map_from_names(names: list[str]) -> dict[str, str]:
 
 def safe_rename_first(lf: pl.LazyFrame) -> pl.LazyFrame:
     # 1) Limpia nombres crudos con espacios o saltos de línea
-    names0 = lf.collect_schema().names()
+    names0 = _lf_columns(lf)
     cleaned = {old: old.strip().replace("\r", "").replace("\n", "")
                for old in names0
                if old != old.strip() or ("\r" in old) or ("\n" in old)}
@@ -71,7 +78,7 @@ def safe_rename_first(lf: pl.LazyFrame) -> pl.LazyFrame:
         lf = lf.rename(cleaned)
 
     # 2) Aplica sinónimos → canónicos
-    names = lf.collect_schema().names()
+    names = _lf_columns(lf)
     rm = build_rename_map_from_names(names)
 
     # 3) Evita colisiones: si ya existe el canónico, no renombra ese sinónimo
@@ -82,13 +89,9 @@ def safe_rename_first(lf: pl.LazyFrame) -> pl.LazyFrame:
     return lf
 
 # ------------------------------------------------------------
-# Helpers de extracción
+# Extracción de yyyymm (evento/lote)
 # ------------------------------------------------------------
 def _yyyymm_from_text_expr(text_expr: pl.Expr) -> pl.Expr:
-    """
-    Extrae YYYYMM robusto a partir de un texto:
-      - si hay 'YYYY-MM' o 'YYYY/MM' o '...YYYYMM...' lo devuelve como Int64
-    """
     cleaned = text_expr.cast(pl.Utf8, strict=False).str.replace_all(r"[-/]", "", literal=False)
     six = cleaned.str.extract(r"(\d{6})", group_index=1)
     return six.cast(pl.Int64, strict=False)
@@ -103,7 +106,7 @@ def year_from_yyyymm(expr: pl.Expr) -> pl.Expr:
     return pl.floor(expr.cast(pl.Float64) / 100.0).cast(pl.Int64)
 
 # ------------------------------------------------------------
-# API principal para el ETL
+# Estandarización principal
 # ------------------------------------------------------------
 def standardize_lazyframe(
     lf: pl.LazyFrame,
@@ -111,16 +114,9 @@ def standardize_lazyframe(
     brands_map: pl.DataFrame | None,
     fuels_map: pl.DataFrame | None,
 ) -> pl.LazyFrame:
-    """
-    Estandariza columnas y claves del DGT conforme al esquema real y a las reglas pedidas.
-    - yyyymm: evento/lote → transmision (YYYY-MM / YYYY/MM / contiene YYYYMM) → nombre_archivo → hint
-    - anio: año de primera matriculación → año_mat → fecha_mat → derivación por antigüedad vs yyyymm → año(yyyymm)
-    - Normalizaciones: marca_normalizada = coalesce(make_clean, marca); modelo_normalizado = coalesce(modelo_base, modelo)
-      Todo en UPPER y strip. Joins/keys en UPPER (código provincia como string).
-    """
     lf = safe_rename_first(lf)
 
-    # Parseo de fecha de matriculación (formatos mixtos)
+    # Parseo de fecha de matriculación (dos formatos)
     lf = lf.with_columns(
         pl.col("fecha_mat").cast(pl.Utf8).str.strptime(pl.Date, "%d/%m/%Y", strict=False)
           .fill_null(pl.col("fecha_mat").cast(pl.Utf8).str.strptime(pl.Date, "%Y-%m-%d", strict=False))
@@ -130,27 +126,25 @@ def standardize_lazyframe(
     # yyyymm a partir de transmision / nombre_archivo / hint
     lf = lf.with_columns(yyyymm_from_sources(yyyymm_hint))
 
-    # Marca y Modelo canonizados (coalesce + UPPER) con mapeos opcionales
+    # Marca y Modelo: coalesce y UPPER (sin perder make_clean/modelo_base)
     marca_src = pl.coalesce([pl.col("make_clean"), pl.col("marca")]).alias("_marca_src")
     modelo_src = pl.coalesce([pl.col("modelo_base"), pl.col("modelo")]).alias("_modelo_src")
     lf = lf.with_columns([norm_upper(marca_src).alias("_marca_alias_norm"),
                           norm_upper(modelo_src).alias("_modelo_norm")])
 
     if brands_map is not None and brands_map.height > 0:
-        # join en alias_norm → marca_normalizada (canónica) o alias si no hay mapping
-        lf = (lf.join(brands_map.lazy(), left_on="_marca_alias_norm", right_on="alias_norm", how="left")
-                .with_columns(pl.coalesce([pl.col("marca_normalizada"), pl.col("_marca_alias_norm")]).alias("marca_normalizada")))
+        lf = (lf.join(brands_map.lazy(), left_on="_marca_alias_norm", right_on="alias_norm", how="left", suffix="_map")
+                .with_columns(pl.coalesce([pl.col("marca_normalizada_map"), pl.col("_marca_alias_norm")]).alias("marca_normalizada")))
     else:
         lf = lf.with_columns(pl.col("_marca_alias_norm").alias("marca_normalizada"))
 
-    # Modelo normalizado (no mapeamos a diccionario)
     lf = lf.with_columns(pl.col("_modelo_norm").alias("modelo_normalizado"))
 
-    # Combustible a 5 buckets con JSON/pares → fallback 'OTROS'
+    # Combustible mapeado → buckets, fallback 'OTROS'
     lf = lf.with_columns(norm_upper(pl.col("combustible")).alias("_comb_alias_norm"))
     if fuels_map is not None and fuels_map.height > 0:
-        lf = (lf.join(fuels_map.lazy(), left_on="_comb_alias_norm", right_on="alias_norm", how="left")
-                .with_columns(pl.coalesce([pl.col("combustible_right"), pl.lit("OTROS")]).alias("combustible")))
+        lf = (lf.join(fuels_map.lazy(), left_on="_comb_alias_norm", right_on="alias_norm", how="left", suffix="_map")
+                .with_columns(pl.coalesce([pl.col("combustible_map"), pl.lit("OTROS")]).alias("combustible")))
     else:
         lf = lf.with_columns(
             pl.when(pl.col("_comb_alias_norm").str.contains("PHEV|PLUG")).then(pl.lit("PHEV"))
@@ -161,7 +155,7 @@ def standardize_lazyframe(
              .otherwise(pl.lit("OTROS")).alias("combustible")
         )
 
-    # Normalización INE (solo INE, no usamos 'localidad')
+    # INE normalizado
     raw_ine = pl.col("codigo_ine").cast(pl.Utf8, strict=False).str.strip_chars().str.replace_all("\r", "").str.replace_all("\n", "")
     is_numeric_like = raw_ine.str.contains(r"^\d+(\.0+)?$", literal=False)
     ine_digits = (
@@ -176,7 +170,7 @@ def standardize_lazyframe(
     )
     lf = lf.with_columns(codigo_ine_norm)
 
-    # Provincia y código provincia (string estable). Si falta, derivar de INE (dos primeros dígitos)
+    # Provincia y código provincia
     lf = lf.with_columns([
         norm_upper(pl.col("provincia")).alias("provincia"),
         pl.when(pl.col("codigo_provincia").is_not_null())
@@ -186,19 +180,15 @@ def standardize_lazyframe(
           .otherwise(pl.lit(None, dtype=pl.Utf8)).alias("codigo_provincia")
     ])
 
-    # Tipos y tipos auxiliares
+    # Tipos y auxiliares
     lf = lf.with_columns([
         norm_upper(pl.col("tipo_vehiculo")).alias("tipo_vehiculo_norm"),
         pl.col("transmision").cast(pl.Utf8).alias("transmision"),
         pl.col("antiguedad_anios").cast(pl.Float64, strict=False).alias("antiguedad_anios"),
     ])
 
-    # anio (año de MATRICULACIÓN) con prioridades: año_mat -> fecha_mat -> derivación (yyyymm - antigüedad) -> año(yyyymm)
-    # Regla de derivación: anio = floor(yyyymm/100) - round(antiguedad_anios)
-    anio_derivado = (
-        year_from_yyyymm(pl.col("yyyymm"))
-        - pl.col("antiguedad_anios").round(0).cast(pl.Int64)
-    )
+    # anio (año de MATRICULACIÓN)
+    anio_derivado = year_from_yyyymm(pl.col("yyyymm")) - pl.col("antiguedad_anios").round(0).cast(pl.Int64)
     lf = lf.with_columns([
         pl.when(pl.col("año_mat").is_not_null())
           .then(pl.col("año_mat").cast(pl.Int64, strict=False))
@@ -210,7 +200,7 @@ def standardize_lazyframe(
           .alias("anio")
     ])
 
-    # Casts finales estables
+    # Casts finales
     lf = lf.with_columns([
         pl.col("yyyymm").cast(pl.Int64, strict=False).alias("yyyymm"),
         pl.col("anio").cast(pl.Int64, strict=False).alias("anio"),
@@ -219,7 +209,6 @@ def standardize_lazyframe(
         pl.col("modelo_normalizado").cast(pl.Utf8, strict=False).alias("modelo_normalizado"),
         pl.col("combustible").cast(pl.Utf8, strict=False).alias("combustible"),
     ])
-
     return lf
 
 def keep_tipos(lf: pl.LazyFrame, include: list[str]) -> pl.LazyFrame:
@@ -233,4 +222,3 @@ def keep_tipos(lf: pl.LazyFrame, include: list[str]) -> pl.LazyFrame:
         tokens.append(u)
     pat = "(" + "|".join([re.escape(x) for x in tokens]) + ")"
     return lf.filter(pl.col("tipo_vehiculo_norm").is_null() | pl.col("tipo_vehiculo_norm").str.contains(pat))
-
