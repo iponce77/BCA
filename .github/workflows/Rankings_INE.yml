@@ -111,57 +111,71 @@ jobs:
           PY
 
 
-      - name: Build CLI flags from compact inputs
+      - name: Build CLI flags (robusto en Python)
         id: flags
-        shell: bash
+        env:
+          IN_LOCATION: ${{ github.event.inputs.location }}
+          IN_PERIOD: ${{ github.event.inputs.period }}
+          IN_FILTERS: ${{ github.event.inputs.filters }}
+          IN_OPTIONS: ${{ github.event.inputs.options }}
+          IN_TOP: ${{ github.event.inputs.top }}
+          IN_FORMAT: ${{ github.event.inputs.format }}
+          IN_CHUNKSIZE: ${{ github.event.inputs.chunksize }}
+          IN_DRY_RUN: ${{ github.event.inputs.dry_run }}
         run: |
-          set -euo pipefail
-          FLAGS=""
+          python - << 'PY'
+          import os, shlex
 
-          parse_kv() {
-            local s="$1"
-            echo "$s" | tr ';' '\n' | sed '/^[[:space:]]*$/d' | while IFS='=' read -r k v; do
-              k="$(echo "$k" | xargs)"; v="$(echo "$v" | xargs)"
-              [[ -z "${k:-}" || -z "${v:-}" ]] && continue
-              case "$k" in
-                ine) FLAGS+=" --ine $v" ;;
-                mun) FLAGS+=" --mun \"$v\"" ;;
-                provincia) FLAGS+=" --provincia \"$v\"" ;;
-                ccaa) FLAGS+=" --ccaa \"$v\"" ;;
-                anio) FLAGS+=" --anio $v" ;;
-                start) FLAGS+=" --start $v" ;;
-                end) FLAGS+=" --end $v" ;;
-                marca) FLAGS+=" --marca \"$v\"" ;;
-                modelo) FLAGS+=" --modelo \"$v\"" ;;
-                combustible) FLAGS+=" --combustible \"$v\"" ;;
-                by_combustible) [[ "$v" == "true" ]] && FLAGS+=" --by-combustible" ;;
-                mix|mix_combustible) [[ "$v" == "true" ]] && FLAGS+=" --mix-combustible" ;;
-                vs_prev) [[ "$v" == "true" ]] && FLAGS+=" --vs-prev" ;;
-                timeseries) [[ "$v" == "true" ]] && FLAGS+=" --timeseries" ;;
-                chunksize) [[ -n "$v" ]] && FLAGS+=" --chunksize $v" ;;
-              esac
-            done
-          }
+          def parse(s):
+              if not s: return []
+              parts=[]
+              for kv in filter(None, [p.strip() for p in s.split(';')]):
+                  if '=' not in kv: 
+                      continue
+                  k,v=kv.split('=',1)
+                  k=k.strip(); v=v.strip()
+                  if not k or v=='':
+                      continue
+                  # numéricos directos
+                  if k in ('ine','anio','start','end','chunksize','top'):
+                      parts += [f'--{k}', v] if k!='ine' else ['--ine', v]
+                  # string con comillas
+                  elif k in ('mun','provincia','ccaa','marca','modelo','combustible'):
+                      parts += [f'--{k}', v]
+                  # booleanos → flags
+                  elif k in ('by_combustible','mix','mix_combustible','vs_prev','timeseries'):
+                      if v.lower()=='true':
+                          flag = {'mix':'mix-combustible','mix_combustible':'mix-combustible'}.get(k,k)
+                          parts += [f'--{flag}']
+              return parts
 
-          # location / period / filters / options
-          [[ -n "${{ github.event.inputs.location }}" ]] && parse_kv "${{ github.event.inputs.location }}"
-          [[ -n "${{ github.event.inputs.period }}" ]] && parse_kv "${{ github.event.inputs.period }}"
-          [[ -n "${{ github.event.inputs.filters }}" ]] && parse_kv "${{ github.event.inputs.filters }}"
-          [[ -n "${{ github.event.inputs.options }}" ]] && parse_kv "${{ github.event.inputs.options }}"
-          [[ -n "${{ github.event.inputs.format }}" ]] && FLAGS+=" --format ${{ github.event.inputs.format }}"
-          [[ -n "${{ github.event.inputs.chunksize }}" ]] && parse_kv "chunksize=${{ github.event.inputs.chunksize }}"
-          [[ "${{ github.event.inputs.dry_run }}" == "true" ]] && FLAGS+=" --dry-run"
+          flags=[]
+          flags += parse(os.getenv('IN_LOCATION',''))
+          flags += parse(os.getenv('IN_PERIOD',''))
+          flags += parse(os.getenv('IN_FILTERS',''))
+          flags += parse(os.getenv('IN_OPTIONS',''))
 
-          # top
-          FLAGS+=" --top ${{ github.event.inputs.top }}"
+          fmt=os.getenv('IN_FORMAT','')
+          if fmt: flags += ['--format', fmt]
 
-          {
-            echo 'flags<<EOF'
-            echo "$FLAGS"
-            echo 'EOF'
-          } >> "$GITHUB_OUTPUT"
+          ch=os.getenv('IN_CHUNKSIZE','')
+          if ch: flags += ['--chunksize', ch]
 
-          echo "FLAGS: $FLAGS"
+          if os.getenv('IN_DRY_RUN','false').lower()=='true':
+              flags += ['--dry-run']
+
+          top=os.getenv('IN_TOP','')
+          if top: flags += ['--top', top]
+
+          # Escapar seguro para shell
+          out=' '.join(shlex.quote(x) for x in flags)
+          # Exponer como output multiline para evitar escapes raros
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:
+              f.write('flags<<EOF\n'); f.write(out + '\n'); f.write('EOF\n')
+
+          print('FLAGS:', out)
+          PY
+
 
       - name: Run rankings_ine.py (Parquet input)
         env:
