@@ -1,0 +1,221 @@
+name: DGT · Rankings INE (Parquet → CSV en Drive)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mun:
+        description: "Nombre de municipio (alternativa a ine)"
+        required: false
+      ine:
+        description: "Código INE (alternativa a mun)"
+        required: false
+      provincia:
+        description: "Provincia para desambiguar (opcional)"
+        required: false
+      ccaa:
+        description: "CCAA para desambiguar (opcional)"
+        required: false
+      anio:
+        description: "YYYY (exclusivo con start/end)"
+        required: false
+      start:
+        description: "Inicio yyyymm (exclusivo con anio)"
+        required: false
+      end:
+        description: "Fin yyyymm (exclusivo con anio)"
+        required: false
+      marca:
+        description: "Filtro marca"
+        required: false
+      modelo:
+        description: "Filtro modelo"
+        required: false
+      combustible:
+        description: "Filtro combustible"
+        required: false
+      by_combustible:
+        description: "Ranking por combustible (true/false)"
+        required: false
+        default: "false"
+      mix_combustible:
+        description: "Exportar mix combustible (true/false)"
+        required: false
+        default: "true"
+      top:
+        description: "Top N"
+        required: false
+        default: "20"
+      vs_prev:
+        description: "Comparar con periodo previo (true/false)"
+        required: false
+        default: "false"
+      timeseries:
+        description: "Exportar serie mensual (true/false)"
+        required: false
+        default: "false"
+      format:
+        description: "Formato --show (table|csv)"
+        required: false
+        default: "table"
+      # CSV chunksize es sólo si el input fuera CSV (no Parquet)
+      chunksize:
+        description: "chunksize (solo CSV)"
+        required: false
+      dry_run:
+        description: "No escribir ficheros (true/false)"
+        required: false
+        default: "false"
+
+concurrency:
+  group: dgt-rankings
+  cancel-in-progress: false
+
+env:
+  GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64 }}
+  GOOGLE_DRIVE_SCOPE: https://www.googleapis.com/auth/drive.file
+  BCA_MONTHLY_FOLDER_ID: ${{ secrets.BCA_MONTHLY_FOLDER_ID }}
+  DGT_ANALISIS_FOLDER_ID: ${{ secrets.DGT_ANALISIS_FOLDER_ID }}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt || true
+          pip install pyarrow pandas google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
+
+      - name: Prepare workspace
+        run: |
+          mkdir -p data
+          mkdir -p outputs
+
+      # ↓↓↓ PATRÓN ESTILO BCA: descarga vía Drive API con gdrive_auth ↓↓↓
+      - name: Fetch latest Parquet from BCA monthly folder
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python - << 'PY'
+          from pathlib import Path
+          from gdrive_auth import authenticate_drive
+          from googleapiclient.http import MediaIoBaseDownload
+          import io, os, re
+          FOLDER_ID = os.environ["BCA_MONTHLY_FOLDER_ID"]
+          svc = authenticate_drive()
+          # Busca el parquet con 'agg_transmisiones_ine' en el nombre; si no, coge el último .parquet
+          q = " and ".join([
+            f"'{FOLDER_ID}' in parents",
+            "trashed = false",
+            "(mimeType = 'application/vnd.google-apps.file' or mimeType != 'application/vnd.google-apps.folder')"
+          ])
+          resp = svc.files().list(
+            q=q, fields="files(id,name,modifiedTime,mimeType)",
+            orderBy="modifiedTime desc",
+            pageSize=1000, includeItemsFromAllDrives=True, supportsAllDrives=True
+          ).execute()
+          files = resp.get("files", [])
+          target = None
+          for f in files:
+            name = f["name"]
+            if name.lower().endswith(".parquet") and ("agg_transmisiones_ine" in name.lower()):
+              target = f; break
+          if target is None:
+            for f in files:
+              if f["name"].lower().endswith(".parquet"):
+                target = f; break
+          if target is None:
+            raise SystemExit("⛔ No se encontró ningún .parquet en la carpeta BCA_MONTHLY_FOLDER_ID.")
+          fid, name = target["id"], target["name"]
+          print("Seleccionado:", name)
+          req = svc.files().get_media(fileId=fid)
+          buf = io.BytesIO()
+          dl = MediaIoBaseDownload(buf, req)
+          done = False
+          while not done:
+              _, done = dl.next_chunk()
+          Path(name).write_bytes(buf.getvalue())
+          print(f"✅ Descargado {name}")
+          PY
+        # (Tu repo usa exactamente este patrón con gdrive_auth y MediaIoBaseDownload) :contentReference[oaicite:5]{index=5}
+
+      - name: Ensure municipios_ine.csv exists
+        run: |
+          test -f data/municipios_ine.csv || (echo "⛔ Falta data/municipios_ine.csv" && exit 1)
+
+      - name: Run rankings_ine.py (Parquet input)
+        env:
+          MUNICIPIOS_INE_CSV: data/municipios_ine.csv
+        run: |
+          INP="$(ls -1 *.parquet | head -n1)"
+          FLAGS=""
+          [[ -n "${{ github.event.inputs.mun }}" ]] && FLAGS="$FLAGS --mun '${{ github.event.inputs.mun }}'"
+          [[ -n "${{ github.event.inputs.ine }}" ]] && FLAGS="$FLAGS --ine ${{ github.event.inputs.ine }}"
+          [[ -n "${{ github.event.inputs.provincia }}" ]] && FLAGS="$FLAGS --provincia '${{ github.event.inputs.provincia }}'"
+          [[ -n "${{ github.event.inputs.ccaa }}" ]] && FLAGS="$FLAGS --ccaa '${{ github.event.inputs.ccaa }}'"
+          [[ -n "${{ github.event.inputs.anio }}" ]] && FLAGS="$FLAGS --anio ${{ github.event.inputs.anio }}"
+          [[ -n "${{ github.event.inputs.start }}" ]] && FLAGS="$FLAGS --start ${{ github.event.inputs.start }}"
+          [[ -n "${{ github.event.inputs.end }}" ]] && FLAGS="$FLAGS --end ${{ github.event.inputs.end }}"
+          [[ -n "${{ github.event.inputs.marca }}" ]] && FLAGS="$FLAGS --marca '${{ github.event.inputs.marca }}'"
+          [[ -n "${{ github.event.inputs.modelo }}" ]] && FLAGS="$FLAGS --modelo '${{ github.event.inputs.modelo }}'"
+          [[ -n "${{ github.event.inputs.combustible }}" ]] && FLAGS="$FLAGS --combustible '${{ github.event.inputs.combustible }}'"
+          [[ "${{ github.event.inputs.by_combustible }}" == "true" ]] && FLAGS="$FLAGS --by-combustible"
+          [[ "${{ github.event.inputs.mix_combustible }}" == "true" ]] && FLAGS="$FLAGS --mix-combustible"
+          [[ "${{ github.event.inputs.vs_prev }}" == "true" ]] && FLAGS="$FLAGS --vs-prev"
+          [[ "${{ github.event.inputs.timeseries }}" == "true" ]] && FLAGS="$FLAGS --timeseries"
+          [[ -n "${{ github.event.inputs.format }}" ]] && FLAGS="$FLAGS --format ${{ github.event.inputs.format }}"
+          [[ -n "${{ github.event.inputs.chunksize }}" ]] && FLAGS="$FLAGS --chunksize ${{ github.event.inputs.chunksize }}"
+          [[ "${{ github.event.inputs.dry_run }}" == "true" ]] && FLAGS="$FLAGS --dry-run"
+          echo "Usando Parquet: $INP"
+          python rankings_ine.py $FLAGS --data "$INP" --top ${{ github.event.inputs.top }} --show
+
+      # ↓↓↓ PATRÓN ESTILO BCA: subida a Drive con API (sin rclone) ↓↓↓
+      - name: Upload outputs to Drive (DGT_ANALISIS_FOLDER_ID)
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python - << 'PY'
+          from pathlib import Path
+          from gdrive_auth import authenticate_drive
+          from googleapiclient.http import MediaFileUpload
+          import os, sys
+          FOLDER_ID = os.environ["DGT_ANALISIS_FOLDER_ID"]
+          svc = authenticate_drive()
+          # Selecciona CSV/JSON generados
+          files = list(Path(".").glob("ranking_*.csv")) + \
+                  list(Path(".").glob("ranking_*.json")) + \
+                  list(Path(".").glob("mix_combustible_*.csv")) + \
+                  list(Path(".").glob("mix_combustible_*.json")) + \
+                  list(Path(".").glob("timeseries_*.csv")) + \
+                  list(Path(".").glob("timeseries_*.json"))
+          if not files:
+            print("⚠️ No hay ficheros para subir."); sys.exit(0)
+          for p in files:
+            media = MediaFileUpload(str(p), resumable=True)
+            body = {"name": p.name, "parents": [FOLDER_ID]}
+            svc.files().create(body=body, media_body=media, supportsAllDrives=True).execute()
+            print("⬆️  Uploaded:", p.name)
+          print("✅ Subida completada.")
+          PY
+
+      - name: Upload artifact (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dgt-rankings
+          path: |
+            ranking_*.csv
+            ranking_*.json
+            mix_combustible_*.csv
+            mix_combustible_*.json
+            timeseries_*.csv
+            timeseries_*.json
