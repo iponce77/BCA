@@ -133,8 +133,18 @@ def standardize_lazyframe(
                           norm_upper(modelo_src).alias("_modelo_norm")])
 
     if brands_map is not None and brands_map.height > 0:
-        lf = (lf.join(brands_map.lazy(), left_on="_marca_alias_norm", right_on="alias_norm", how="left", suffix="_map")
-                .with_columns(pl.coalesce([pl.col("marca_normalizada_map"), pl.col("_marca_alias_norm")]).alias("marca_normalizada")))
+        lf = (
+            lf.join(
+                brands_map.lazy(),
+                left_on="_marca_alias_norm",
+                right_on="alias_norm",
+                how="left",
+                suffix="_map"
+            )
+            .with_columns(
+                pl.coalesce([pl.col("marca_normalizada_map"), pl.col("_marca_alias_norm")]).alias("marca_normalizada")
+            )
+        )    
     else:
         lf = lf.with_columns(pl.col("_marca_alias_norm").alias("marca_normalizada"))
 
