@@ -9,5 +9,5 @@ F: Lujo / Representación
 JC: SUV compacto
 JD: SUV mediano
 JE: SUV grande
-M: Monovolumen
+M: Monovolumen / Furgoneta
 S: Deportivo
