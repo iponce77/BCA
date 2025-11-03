@@ -99,11 +99,19 @@ def _resolve_ine(args, municipios_path: str) -> List[int]:
     return [int(x) for x in candidates["codigo_ine"].tolist()]
 
 def _period_from_args(args) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+    # Siempre trabajamos en AÑOS
     if args.anio:
         return int(args.anio), None, None
+
     if args.start and args.end:
-        return None, int(args.start), int(args.end)
+        s, e = int(args.start), int(args.end)
+        # Si llegan como yyyymm (>= 100000), conviértelos a años con // 100
+        if s >= 100000: s //= 100
+        if e >= 100000: e //= 100
+        return None, s, e
+
     raise SystemExit("Debe indicar --anio o bien --start y --end (YYYY).")
+
 
 def _previous_period(anio: Optional[int], start: Optional[int], end: Optional[int]) -> Tuple[Optional[int], Optional[int], Optional[int]]:
     # Siempre en años
