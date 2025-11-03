@@ -12,6 +12,18 @@ from typing import List, Optional, Tuple
 
 import pandas as pd
 
+@dataclass
+class Filters:
+    ine: List[int]
+    anio: Optional[int]
+    start: Optional[int]
+    end: Optional[int]
+    marca: Optional[str]
+    modelo: Optional[str]
+    combustible: Optional[str]
+    by_combustible: bool
+    top: int
+
 try:
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -91,7 +103,7 @@ def _period_from_args(args) -> Tuple[Optional[int], Optional[int], Optional[int]
         return int(args.anio), None, None
     if args.start and args.end:
         return None, int(args.start), int(args.end)
-    raise SystemExit("Debe indicar --anio o bien --start y --end (yyyymm).")
+    raise SystemExit("Debe indicar --anio o bien --start y --end (YYYY).")
 
 def _previous_period(anio: Optional[int], start: Optional[int], end: Optional[int]) -> Tuple[Optional[int], Optional[int], Optional[int]]:
     # Siempre en años
@@ -170,11 +182,13 @@ def _iter_parquet(pq_path: str, f: Filters) -> pd.DataFrame:
         rg = pf.metadata.row_group(i)
         # filtros gruesos por row-group (best-effort)
         passes_period = True
-        if f.anio is not None and COL_ANIO in pf.schema.names:
-            passes_period = _rg_has(COL_ANIO, lambda mn, mx: (mx >= f.anio and mn <= f.anio), rg)
-        elif f.start and f.end and COL_YYYYMM in pf.schema.names:
-            s, e = f.start, f.end
-            passes_period = _rg_has(COL_YYYYMM, lambda mn, mx: (mx >= s and mn <= e), rg)
+        if COL_ANIO in pf.schema.names:
+            if f.anio is not None:
+                passes_period = _rg_has(COL_ANIO, lambda mn, mx: (mx >= f.anio and mn <= f.anio), rg)
+            elif f.start is not None and f.end is not None:
+                s, e = int(f.start), int(f.end)  # años
+                passes_period = _rg_has(COL_ANIO, lambda mn, mx: (mx >= s and mn <= e), rg)
+
 
         passes_ine = True
         if COL_INE in pf.schema.names:
