@@ -107,53 +107,46 @@ def _period_from_args(args) -> Tuple[Optional[int], Optional[int], Optional[int]
     raise SystemExit("Debe indicar --anio o bien --start y --end (yyyymm).")
 
 def _previous_period(anio: Optional[int], start: Optional[int], end: Optional[int]) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+    # Siempre en años
     if anio is not None:
-        return anio-1, None, None
-    s, e = str(start), str(end)
-    sy, sm = int(s[:4]), int(s[4:])
-    ey, em = int(e[:4]), int(e[4:])
-    length = (ey - sy)*12 + (em - sm) + 1
-    em2 = sm - 1
-    ey2 = sy - 1 if em2==0 else sy
-    em2 = 12 if em2==0 else em2
-    total_prev_end = ey2*12 + em2
-    total_prev_start = total_prev_end - (length-1)
-    psy, psm = divmod(total_prev_start, 12)
-    if psm==0:
-        psy -= 1; psm = 12
-    return None, int(f"{psy:04d}{psm:02d}"), int(f"{ey2:04d}{em2:02d}")
+        return anio - 1, None, None
+    # rango previo con misma longitud en años
+    length = int(end) - int(start) + 1
+    prev_end = int(start) - 1
+    prev_start = prev_end - (length - 1)
+    return None, prev_start, prev_end
 
-@dataclass
-class Filters:
-    ine: List[int]
-    anio: Optional[int]
-    start: Optional[int]
-    end: Optional[int]
-    marca: Optional[str]
-    modelo: Optional[str]
-    combustible: Optional[str]
-    by_combustible: bool
-    top: int
 
 # ------------------------ Carga CSV / Parquet ---------------------------
 def _apply_filters(df: pd.DataFrame, f: Filters) -> pd.DataFrame:
     if df.empty:
         return df
+    if COL_ANIO not in df.columns:
+        raise SystemExit("⛔ El dataset no contiene la columna 'anio', necesaria para el filtrado de periodo.")
+
     cur = df[df[COL_INE].isin(f.ine)]
+
+    # --- PERIODO: siempre por 'anio' ---
     if f.anio is not None:
-        cur = cur[cur[COL_ANIO]==f.anio]
+        cur = cur[cur[COL_ANIO] == f.anio]
     else:
-        cur = cur[(cur[COL_YYYYMM]>=f.start) & (cur[COL_YYYYMM]<=f.end)]
+        # start/end son AÑOS (YYYY) exclusivamente
+        sy, ey = int(f.start), int(f.end)
+        cur = cur[(cur[COL_ANIO] >= sy) & (cur[COL_ANIO] <= ey)]
+
+    # --- OTROS FILTROS ---
     if f.marca:
-        cur = cur[cur[COL_MARCA].str.upper()==f.marca.upper()]
+        cur = cur[cur[COL_MARCA].astype(str).str.upper() == f.marca.upper()]
     if f.modelo:
-        cur = cur[cur[COL_MODELO].str.upper()==f.modelo.upper()]
+        cur = cur[cur[COL_MODELO].astype(str).str.upper() == f.modelo.upper()]
     if f.combustible:
-        cur = cur[cur[COL_COMBUSTIBLE].str.upper()==f.combustible.upper()]
+        cur = cur[cur[COL_COMBUSTIBLE].astype(str).str.upper() == f.combustible.upper()]
+
     for c in [COL_MARCA, COL_MODELO, COL_COMBUSTIBLE]:
         if c in cur.columns:
             cur[c] = cur[c].astype("category")
     return cur
+
 
 def _iter_csv(csv_path: str, f: Filters, chunksize: Optional[int]) -> pd.DataFrame:
     if chunksize:
