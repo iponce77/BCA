@@ -1,19 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-rankings_ine.py
-
-Genera rankings por municipio (INE) y periodo a partir de un dataset de transmisiones
-en CSV **o** Parquet. Incluye:
-- Lectura eficiente:
-  * CSV: --chunksize para filtrar en streaming.
-  * Parquet: lectura por columnas y por row-group (pyarrow) aplicando filtro temprano.
-- Ranking con share, share_top y HHI.
-- Mix de combustibles con alias (BEV/HEV/PHEV/MHEV/GLP/GNC/ICE/FCEV/OTROS).
-- Comparativa vs periodo previo (--vs-prev).
-- Timeseries por yyyymm (--timeseries).
-- Metadatos .json junto a cada salida.
-"""
+from __future__ import annotations
 
 import argparse
 import json
