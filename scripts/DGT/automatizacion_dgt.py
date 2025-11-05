@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional
 from datetime import datetime
+from segments import load_segment_map, infer_segment
 
 import requests
 import pandas as pd
@@ -186,7 +187,11 @@ def run_normalizacionv2_over_parquet(
     Bridge parquet -> tmp CSV -> normalizacionv2 (XLSX) -> merge columnas -> parquet (overwrite).
     Exporta sólo las columnas que necesita el normalizador para ahorrar IO.
     """
+    import os
     import subprocess
+    import tempfile
+    import pandas as pd
+    from pathlib import Path
 
     if cols_minimas_para_normalizador is None:
         cols_minimas_para_normalizador = ["marca", "submodelo"]
@@ -215,7 +220,6 @@ def run_normalizacionv2_over_parquet(
         ]
         weights = os.environ.get(weights_env_var)
         if weights:
-            # Ajusta el flag si tu normalizador usa otro (--model, --weights-path, etc.)
             cmd += ["--weights", str(weights)]
 
         res = subprocess.run(cmd, capture_output=True, text=True)
@@ -235,7 +239,40 @@ def run_normalizacionv2_over_parquet(
             if col in df_norm.columns:
                 df_orig[col] = df_norm[col]
 
+        # ----------- NUEVO: INYECCIÓN DE SEGMENTO -----------
+        # Carga de mapa de segmentos desde la RAÍZ del repo: segment_map.csv
+        try:
+            # repo_root = .../scripts/DGT/ -> parents[2] apunta a la raíz del repo
+            repo_root = Path(__file__).resolve().parents[2]
+            segment_map_path = repo_root / "segment_map.csv"
+
+            # Opción A (con helper segments.py):
+            from segments import load_segment_map, infer_segment
+            segmap = load_segment_map(str(segment_map_path))
+
+            # Comprobamos que df_norm tiene las llaves esperadas
+            has_mk = "make_clean" in df_norm.columns
+            has_mb = "modelo_base" in df_norm.columns
+            if has_mk and has_mb:
+                df_orig["segmento"] = [
+                    infer_segment(mk, mb, segmap)
+                    for mk, mb in zip(df_norm["make_clean"], df_norm["modelo_base"])
+                ]
+            else:
+                # Si por lo que sea no están, no rompemos el flujo
+                df_orig["segmento"] = None
+
+            # Log básico de cobertura (opcional)
+            null_rate = float(df_orig["segmento"].isna().mean()) if len(df_orig) else 0.0
+            print(f"[segmento] asignado con null_rate={null_rate:.1%} usando {segment_map_path}")
+
+        except Exception as e:
+            # No bloqueamos la ejecución por el segmento
+            print(f"[segmento] WARNING: no se pudo inyectar segmento ({e}). Continuamos sin esta columna.")
+        # --------- FIN NUEVO: INYECCIÓN DE SEGMENTO ---------
+
     df_orig.to_parquet(parquet_path, index=False)
+
 
 
 # =========================
