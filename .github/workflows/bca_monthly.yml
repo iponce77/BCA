@@ -116,6 +116,11 @@ jobs:
             --normalizador normalizacionv2.py \
             --whitelist whitelist.xlsx
 
+      - name: Add segmento to BCA merged
+        run: |
+          python add_segmento.py data/bca_merged.parquet data/bca_merged_segment.parquet segment_map.csv
+
+
       - name: Patch merge_config.yaml to monthly file
         run: |
           python - << 'PY'
@@ -160,4 +165,5 @@ jobs:
           python scripts/upload_monthly.py \
             --folder "$BCA_MONTHLY_FOLDER_ID" \
             --files "bca_enriched.xlsx,bca_enriched_analysis.xlsx,audit_matching.xlsx,bca_enriched.parquet"
+
 
