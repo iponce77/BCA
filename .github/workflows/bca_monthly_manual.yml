@@ -179,6 +179,11 @@ jobs:
             --out "bca_norm_${{ steps.dates.outputs.year_month }}.parquet" \
             --normalizador normalizacionv2.py \
             --whitelist whitelist.xlsx
+            
+      - name: Add segmento to BCA merged
+        run: |
+         python tools/add_segmento.py out/bca_merged.parquet out/bca_merged_segment.parquet segment_map.csv
+
 
       - name: Patch merge_config.yaml to monthly file
         run: |
