@@ -1,0 +1,158 @@
+name: BCA - Enriquecer con INE (DGT)
+
+on:
+  workflow_dispatch:
+    inputs:
+      year_month:
+        description: "YYYY-MM del lote mensual (para etiquetar la salida)"
+        required: true
+
+concurrency:
+  group: bca-ine
+  cancel-in-progress: false
+
+jobs:
+  enrich:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64 }}
+      GOOGLE_DRIVE_SCOPE: https://www.googleapis.com/auth/drive.file
+      BCA_MONTHLY_FOLDER_ID: ${{ secrets.BCA_MONTHLY_FOLDER_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt || true
+          pip install pandas pyarrow xlsxwriter google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+
+      - name: Prepare workspace
+        run: |
+          mkdir -p inputs outputs
+
+      - name: Verify municipios_ine.csv exists at repo root
+        run: |
+          test -f municipios_ine.csv || { echo "::error::municipios_ine.csv no está en la raíz del repo"; exit 1; }
+
+      - name: Fetch inputs from Drive (bca_enriched.parquet & agg_transmisiones_ine.parquet)
+        env:
+          FOLDER_ID: ${{ env.BCA_MONTHLY_FOLDER_ID }}
+        run: |
+          python - << 'PY'
+          import os, io, sys
+          from pathlib import Path
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaIoBaseDownload
+          from google.oauth2.credentials import Credentials
+          import base64, json
+
+          # ---- auth from GOOGLE_OAUTH_B64 (refresh-token creds) ----
+          RAW = os.environ["GOOGLE_OAUTH_B64"]
+          CREDS = json.loads(base64.b64decode(RAW).decode("utf-8"))
+          creds = Credentials.from_authorized_user_info(CREDS, scopes=[os.environ["GOOGLE_DRIVE_SCOPE"]])
+
+          svc = build("drive", "v3", credentials=creds)
+          def fetch_exact(name, out_path):
+            q = " and ".join([
+              f"'{os.environ['FOLDER_ID']}' in parents",
+              "trashed = false",
+              f"name = '{name}'"
+            ])
+            resp = svc.files().list(q=q, fields="files(id,name,modifiedTime)", pageSize=1,
+                                    includeItemsFromAllDrives=True, supportsAllDrives=True).execute()
+            files = resp.get("files", [])
+            if not files:
+              print(f"::error::No se encontró {name} en la carpeta indicada.", file=sys.stderr)
+              sys.exit(1)
+            fid = files[0]["id"]
+            req = svc.files().get_media(fileId=fid)
+            buf = io.BytesIO()
+            dl = MediaIoBaseDownload(buf, req)
+            done = False
+            while not done:
+              _, done = dl.next_chunk()
+            Path(out_path).write_bytes(buf.getvalue())
+            print(f"✅ Descargado {name} → {out_path}")
+
+          Path("inputs").mkdir(exist_ok=True)
+          fetch_exact("bca_enriched.parquet", "inputs/bca_enriched.parquet")
+          fetch_exact("agg_transmisiones_ine.parquet", "inputs/agg_transmisiones_ine.parquet")
+          PY
+
+      - name: Run enrichment (root script)
+        run: |
+          python bca_enrichment_pipeline.py \
+            --bca inputs/bca_enriched.parquet \
+            --ine inputs/agg_transmisiones_ine.parquet \
+            --muni municipios_ine.csv \
+            --outdir outputs
+
+      - name: Name outputs
+        id: names
+        env:
+          YM: ${{ github.event.inputs.year_month }}
+        run: |
+          set -e
+          # Renombrar si existen para incluir el sufijo YYYY-MM
+          if [ -f outputs/bca_enriched_final.parquet ]; then
+            mv outputs/bca_enriched_final.parquet "outputs/bca_enriched_with_ine_${YM}.parquet"
+            echo "pq=outputs/bca_enriched_with_ine_${YM}.parquet" >> $GITHUB_OUTPUT
+          fi
+          if [ -f outputs/bca_enriched_final.xlsx ]; then
+            mv outputs/bca_enriched_final.xlsx "outputs/bca_enriched_with_ine_${YM}.xlsx"
+            echo "xl=outputs/bca_enriched_with_ine_${YM}.xlsx" >> $GITHUB_OUTPUT
+          fi
+          # QA / diccionarios (si existen)
+          for f in qa_stats.csv qa_report.md data_dictionary.csv data_dictionary.md; do
+            if [ -f "outputs/$f" ]; then
+              nf="${f%.*}_${YM}.${f##*.}"
+              mv "outputs/$f" "outputs/$nf"
+            fi
+          done
+
+      - name: Upload outputs back to Drive (same folder)
+        if: always()
+        env:
+          FOLDER_ID: ${{ env.BCA_MONTHLY_FOLDER_ID }}
+        run: |
+          python - << 'PY'
+          import os, sys, json, base64
+          from pathlib import Path
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaFileUpload
+          from google.oauth2.credentials import Credentials
+
+          RAW = os.environ["GOOGLE_OAUTH_B64"]
+          CREDS = json.loads(base64.b64decode(RAW).decode("utf-8"))
+          creds = Credentials.from_authorized_user_info(CREDS, scopes=[os.environ["GOOGLE_DRIVE_SCOPE"]])
+          svc = build("drive", "v3", credentials=creds)
+
+          def upload(path):
+            file_metadata = {"name": Path(path).name, "parents": [os.environ["FOLDER_ID"]]}
+            media = MediaFileUpload(path, resumable=True)
+            svc.files().create(body=file_metadata, media_body=media,
+                               supportsAllDrives=True).execute()
+            print(f"⬆️  Subido {path}")
+
+          outdir = Path("outputs")
+          if not outdir.exists():
+            sys.exit(0)
+          for p in outdir.iterdir():
+            if p.is_file():
+              upload(str(p))
+          PY
+
+      - name: Upload artifacts to Actions (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: bca-ine-${{ github.event.inputs.year_month }}
+          path: outputs/*
