@@ -118,7 +118,7 @@ jobs:
 
       - name: Add segmento to BCA merged
         run: |
-          python tools/add_segmento.py \
+          python add_segmento.py \
             "bca_norm_${{ steps.dates.outputs.year_month }}.parquet" \
             "bca_norm_${{ steps.dates.outputs.year_month }}.parquet" \
             segment_map.csv
@@ -168,6 +168,7 @@ jobs:
           python scripts/upload_monthly.py \
             --folder "$BCA_MONTHLY_FOLDER_ID" \
             --files "bca_enriched.xlsx,bca_enriched_analysis.xlsx,audit_matching.xlsx,bca_enriched.parquet"
+
 
 
 
