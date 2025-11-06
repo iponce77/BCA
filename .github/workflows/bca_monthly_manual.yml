@@ -182,7 +182,7 @@ jobs:
             
       - name: Add segmento to BCA merged
         run: |
-          python tools/add_segmento.py \
+          python add_segmento.py \
             "bca_norm_${{ steps.dates.outputs.year_month }}.parquet" \
             "bca_norm_${{ steps.dates.outputs.year_month }}.parquet" \
             segment_map.csv
