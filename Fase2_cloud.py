@@ -309,16 +309,27 @@ async def run(args):
         # Crear pool de páginas reutilizables
         page_pool: asyncio.Queue = asyncio.Queue()
         for _ in range(args.max_pages):
-            page = await nonlocal_ctx["ctx"].new_page()
+            page = await ctx.new_page()
             page_pool.put_nowait(page)
 
         sem = asyncio.Semaphore(args.max_pages)
-        relogin_lock = asyncio.Lock()   # <<-- LOCK para proteger uso de páginas y relogin
+        # Event que permite a los workers tomar páginas. Si está CLEAR, los workers esperan.
+        relogin_allowed = asyncio.Event()
+        relogin_allowed.set()   # por defecto permitimos tomar páginas
+
+        # Mutex para serializar la rutina de relogin (solo 1 relogin a la vez)
+        relogin_mutex = asyncio.Lock()
+
         results = []
         failure_streak = 0
 
+        # Progreso
+        processed = 0
+        total = len(links)
+        errors_count = 0
+
         async def worker(lk: str):
-            nonlocal failure_streak
+            nonlocal failure_streak, processed, errors_count
             rec = None
 
             # Camino rápido con requests (no consume "página" si funciona)
@@ -330,53 +341,86 @@ async def run(args):
                 logging.debug("direct error %s: %s", lk, e)
 
             if rec is None:
-                # Protección: antes de tomar/usar una página, adquirir relogin_lock
-                async with relogin_lock:
-                    async with sem:
-                        page = await page_pool.get()
+                # Si hay relogin en curso, esperar hasta que se permita
+                await relogin_allowed.wait()
+
+                async with sem:
+                    page = await page_pool.get()
+                    try:
+                        # Jitter para desincronizar rafagas
+                        await asyncio.sleep(random.uniform(0.02, 0.12))
+                        data = await grab_bidpanel_json(page, lk, timeout_ms=args.xhr_timeout_ms, debug=args.debug_net)
+                        if data:
+                            rec = extract_fields(data, lk)
+                        else:
+                            logging.warning("❌ %s → BidPanel no encontrado", lk)
+                            rec = {"link_ficha": lk, "error": "BidPanel no encontrado"}
+                    except Exception as e:
+                        rec = {"link_ficha": lk, "error": f"fallback:{e}"}
+                    finally:
+                        # Reusar la página
                         try:
-                            # Jitter para desincronizar rafagas
-                            await asyncio.sleep(random.uniform(0.02, 0.12))
-                            data = await grab_bidpanel_json(page, lk, timeout_ms=args.xhr_timeout_ms, debug=args.debug_net)
-                            if data:
-                                rec = extract_fields(data, lk)
-                            else:
-                                logging.warning("❌ %s → BidPanel no encontrado", lk)
-                                rec = {"link_ficha": lk, "error": "BidPanel no encontrado"}
-                        except Exception as e:
-                            rec = {"link_ficha": lk, "error": f"fallback:{e}"}
-                        finally:
-                            # Reusar la página (si el contexto se ha cerrado, la página ya estará cerrada;
-                            # el pool será reconstruido desde el relogin que controla la misma lock)
-                            try:
-                                page_pool.put_nowait(page)
-                            except Exception:
-                                pass
+                            page_pool.put_nowait(page)
+                        except Exception:
+                            pass
 
             # Streak breaker
             if rec.get("error"):
                 failure_streak += 1
+                errors_count += 1
             else:
                 failure_streak = 0
 
-            # Si toca relogin: hacerlo dentro del relogin_lock para que nadie use páginas
+            results.append(rec)
+
+            # Progreso: log cada X o al final / on error
+            processed += 1
+            if processed % 20 == 0 or rec.get("error") or processed == total:
+                logging.info("→ Progreso: %d/%d (%.1f%%) — errores: %d", 
+                             processed, total, processed/total*100.0, errors_count)
+
+            # Intentar relogin si corresponde: serializar con relogin_mutex
             if failure_streak >= args.relogin_streak:
-                logging.warning("⚠️ %d fallos consecutivos → relogin + cooldown", failure_streak)
-                async with relogin_lock:
-                    # cerrar contexto antiguo
+                async with relogin_mutex:
+                    # otro worker pudo haber reseteado la racha mientras esperábamos el mutex
+                    if failure_streak < args.relogin_streak:
+                        return
+
+                    logging.warning("⚠️ %d fallos consecutivos → relogin + cooldown", failure_streak)
+
+                    # Evitar que nuevos workers tomen páginas
+                    relogin_allowed.clear()
+
+                    # Esperar a que todas las páginas vuelvan al pool (todos los workers en curso terminen)
+                    # timeout razonable para evitar deadlocks (ej: 30s)
+                    wait_start = time.time()
+                    while page_pool.qsize() < args.max_pages:
+                        await asyncio.sleep(0.1)
+                        if time.time() - wait_start > 30:
+                            logging.warning("⚠️ Espera a que vuelvan páginas excedió 30s; prosigo de todas formas")
+                            break
+
+                    # Cerrar contexto antiguo (si existe)
                     try:
                         await nonlocal_ctx["ctx"].close()
                     except Exception:
                         pass
 
                     # Forzar login (se ejecutará en hilo si estamos dentro del loop)
-                    force_login(args.storage)
-                    _load_cookies_into_session(args.storage)
+                    try:
+                        force_login(args.storage)
+                        _load_cookies_into_session(args.storage)
+                    except Exception as e:
+                        logging.error("Relogin fallido: %s", e)
+                        # Restaurar event para que no quede bloqueado indefinidamente
+                        relogin_allowed.set()
+                        raise
 
-                    # crear nuevo contexto y reconstruir pool
+                    # Reconstruir contexto y pool
                     ctx2 = await browser.new_context(storage_state=str(args.storage),
                                                      locale="es-ES", user_agent=LOGIN_UA)
-                    # cerrar páginas antiguas en la cola si quedan y vaciar
+
+                    # Vaciar y cerrar páginas antiguas si las hubiera
                     try:
                         while not page_pool.empty():
                             try:
@@ -390,19 +434,13 @@ async def run(args):
                     except Exception:
                         pass
 
-                    # rellenar nuevo pool
                     for _ in range(args.max_pages):
                         page = await ctx2.new_page()
                         page_pool.put_nowait(page)
 
-                    # swap context
                     nonlocal_ctx["ctx"] = ctx2
                     failure_streak = 0
-
-            results.append(rec)
-
-        print("→ Lanzando scraping con pool de páginas…")
-        await asyncio.gather(*(worker(l) for l in links))
+                    relogin_allowed.set()
 
 
         # Reintentos de fallidas (rápidos, mismo contexto)
@@ -492,4 +530,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
