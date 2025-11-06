@@ -441,6 +441,8 @@ async def run(args):
                     nonlocal_ctx["ctx"] = ctx2
                     failure_streak = 0
                     relogin_allowed.set()
+        print("→ Lanzando scraping con pool de páginas…")
+        await asyncio.gather(*(worker(l) for l in links))
 
 
         # Reintentos de fallidas (rápidos, mismo contexto)
@@ -530,5 +532,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
