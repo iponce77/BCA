@@ -182,8 +182,10 @@ jobs:
             
       - name: Add segmento to BCA merged
         run: |
-         python add_segmento.py out/bca_merged.parquet out/bca_merged_segment.parquet segment_map.csv
-
+          python tools/add_segmento.py \
+            "bca_norm_${{ steps.dates.outputs.year_month }}.parquet" \
+            "bca_norm_${{ steps.dates.outputs.year_month }}.parquet" \
+            segment_map.csv
 
       - name: Patch merge_config.yaml to monthly file
         run: |
