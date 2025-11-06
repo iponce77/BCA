@@ -10,7 +10,6 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional
 from datetime import datetime
-from segments import load_segment_map, infer_segment
 
 import requests
 import pandas as pd
