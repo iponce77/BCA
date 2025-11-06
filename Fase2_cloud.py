@@ -61,19 +61,52 @@ def _print_login_banner(msg: str) -> None:
 
 
 def force_login(state_path: pathlib.Path):
-    """Login síncrono (idéntico al antiguo flujo) y guarda storage_state en JSON."""
+    """Login síncrono (idéntico al antiguo flujo) y guarda storage_state en JSON.
+
+    Si estamos *dentro* de un asyncio loop, ejecuta `perform_login` en un
+    thread separado para evitar usar sync_playwright() en la hebra del loop.
+    """
     _print_login_banner("→ Ejecutando LOGIN inicial (forzado)")
     user, pwd = os.getenv("BCA_USER"), os.getenv("BCA_PASS")
     if not user or not pwd:
         raise RuntimeError("BCA_USER / BCA_PASS no definidos (env o .env)")
-    perform_login(
-        user=user,
-        password=pwd,
-        headless=True,
-        debug=False,
-        screenshot_on_fail=False,
-        output=state_path,
-    )
+
+    def _call_login():
+        perform_login(
+            user=user,
+            password=pwd,
+            headless=True,
+            debug=False,
+            screenshot_on_fail=False,
+            output=state_path,
+        )
+
+    # ¿Hay un loop corriendo en esta hebra?
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        # Ejecutar en hilo separado y propagar excepciones
+        import threading
+        exc = {}
+
+        def _target():
+            try:
+                _call_login()
+            except Exception as e:
+                exc["e"] = e
+
+        t = threading.Thread(target=_target, daemon=False)
+        t.start()
+        t.join()
+        if "e" in exc:
+            raise exc["e"]
+    else:
+        # Llamada síncrona "normal" (antes de asyncio.run)
+        _call_login()
+
     print(f"→ Login completado, storage generado: {state_path}")
 
 
@@ -267,23 +300,28 @@ async def run(args):
         )
         print("→ Browser lanzado")
 
+        # contexto inicial
         ctx = await browser.new_context(storage_state=str(args.storage),
                                         locale="es-ES", user_agent=LOGIN_UA)
+        # usamos un contenedor para manejar swap de contexto de forma segura
+        nonlocal_ctx = {"ctx": ctx}
 
         # Crear pool de páginas reutilizables
         page_pool: asyncio.Queue = asyncio.Queue()
         for _ in range(args.max_pages):
-            page = await ctx.new_page()
+            page = await nonlocal_ctx["ctx"].new_page()
             page_pool.put_nowait(page)
 
         sem = asyncio.Semaphore(args.max_pages)
+        relogin_lock = asyncio.Lock()   # <<-- LOCK para proteger uso de páginas y relogin
         results = []
         failure_streak = 0
 
         async def worker(lk: str):
             nonlocal failure_streak
-            # Camino rápido con requests (no consume "página" si funciona)
             rec = None
+
+            # Camino rápido con requests (no consume "página" si funciona)
             try:
                 data = get_bidpanel_direct(lk, timeout=args.req_timeout_s, debug_net=args.debug_net)
                 if data:
@@ -292,22 +330,28 @@ async def run(args):
                 logging.debug("direct error %s: %s", lk, e)
 
             if rec is None:
-                async with sem:
-                    page = await page_pool.get()
-                    try:
-                        # Jitter para desincronizar rafagas
-                        await asyncio.sleep(random.uniform(0.02, 0.12))
-                        data = await grab_bidpanel_json(page, lk, timeout_ms=args.xhr_timeout_ms, debug=args.debug_net)
-                        if data:
-                            rec = extract_fields(data, lk)
-                        else:
-                            logging.warning("❌ %s → BidPanel no encontrado", lk)
-                            rec = {"link_ficha": lk, "error": "BidPanel no encontrado"}
-                    except Exception as e:
-                        rec = {"link_ficha": lk, "error": f"fallback:{e}"}
-                    finally:
-                        # Reusar la página
-                        page_pool.put_nowait(page)
+                # Protección: antes de tomar/usar una página, adquirir relogin_lock
+                async with relogin_lock:
+                    async with sem:
+                        page = await page_pool.get()
+                        try:
+                            # Jitter para desincronizar rafagas
+                            await asyncio.sleep(random.uniform(0.02, 0.12))
+                            data = await grab_bidpanel_json(page, lk, timeout_ms=args.xhr_timeout_ms, debug=args.debug_net)
+                            if data:
+                                rec = extract_fields(data, lk)
+                            else:
+                                logging.warning("❌ %s → BidPanel no encontrado", lk)
+                                rec = {"link_ficha": lk, "error": "BidPanel no encontrado"}
+                        except Exception as e:
+                            rec = {"link_ficha": lk, "error": f"fallback:{e}"}
+                        finally:
+                            # Reusar la página (si el contexto se ha cerrado, la página ya estará cerrada;
+                            # el pool será reconstruido desde el relogin que controla la misma lock)
+                            try:
+                                page_pool.put_nowait(page)
+                            except Exception:
+                                pass
 
             # Streak breaker
             if rec.get("error"):
@@ -315,32 +359,51 @@ async def run(args):
             else:
                 failure_streak = 0
 
+            # Si toca relogin: hacerlo dentro del relogin_lock para que nadie use páginas
             if failure_streak >= args.relogin_streak:
                 logging.warning("⚠️ %d fallos consecutivos → relogin + cooldown", failure_streak)
-                await ctx.close()
-                force_login(args.storage)
-                _load_cookies_into_session(args.storage)
-                ctx2 = await browser.new_context(storage_state=str(args.storage),
-                                                 locale="es-ES", user_agent=LOGIN_UA)
-                # reconstruir pool
-                while not page_pool.empty():
+                async with relogin_lock:
+                    # cerrar contexto antiguo
                     try:
-                        page_pool.get_nowait()
+                        await nonlocal_ctx["ctx"].close()
                     except Exception:
-                        break
-                for _ in range(args.max_pages):
-                    page = await ctx2.new_page()
-                    page_pool.put_nowait(page)
-                # swap context
-                nonlocal_ctx["ctx"] = ctx2  # manter referencia si hiciera falta
-                failure_streak = 0
+                        pass
+
+                    # Forzar login (se ejecutará en hilo si estamos dentro del loop)
+                    force_login(args.storage)
+                    _load_cookies_into_session(args.storage)
+
+                    # crear nuevo contexto y reconstruir pool
+                    ctx2 = await browser.new_context(storage_state=str(args.storage),
+                                                     locale="es-ES", user_agent=LOGIN_UA)
+                    # cerrar páginas antiguas en la cola si quedan y vaciar
+                    try:
+                        while not page_pool.empty():
+                            try:
+                                pg = page_pool.get_nowait()
+                                try:
+                                    await pg.close()
+                                except Exception:
+                                    pass
+                            except Exception:
+                                break
+                    except Exception:
+                        pass
+
+                    # rellenar nuevo pool
+                    for _ in range(args.max_pages):
+                        page = await ctx2.new_page()
+                        page_pool.put_nowait(page)
+
+                    # swap context
+                    nonlocal_ctx["ctx"] = ctx2
+                    failure_streak = 0
 
             results.append(rec)
 
-        nonlocal_ctx = {"ctx": ctx}
-
         print("→ Lanzando scraping con pool de páginas…")
         await asyncio.gather(*(worker(l) for l in links))
+
 
         # Reintentos de fallidas (rápidos, mismo contexto)
         for retry in range(1, MAX_RETRIES + 1):
@@ -429,3 +492,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
