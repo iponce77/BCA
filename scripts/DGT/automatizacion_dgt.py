@@ -238,7 +238,6 @@ def run_normalizacionv2_over_parquet(
             if col in df_norm.columns:
                 df_orig[col] = df_norm[col]
 
-        # ----------- NUEVO: INYECCIÓN DE SEGMENTO -----------
         # Carga de mapa de segmentos desde la RAÍZ del repo: segment_map.csv
         try:
             # repo_root = .../scripts/DGT/ -> parents[2] apunta a la raíz del repo
@@ -268,7 +267,19 @@ def run_normalizacionv2_over_parquet(
         except Exception as e:
             # No bloqueamos la ejecución por el segmento
             print(f"[segmento] WARNING: no se pudo inyectar segmento ({e}). Continuamos sin esta columna.")
-        # --------- FIN NUEVO: INYECCIÓN DE SEGMENTO ---------
+
+    mask_moto = (
+        df_orig.get("tipo_vehiculo")
+        .astype(str)
+        .str.upper()
+        .str.strip()
+        .eq("MOTOCICLETA DE 2 RUEDAS")
+    )
+    n_motos = int(mask_moto.sum())
+    if n_motos:
+        print(f"[filtro] Excluyendo {n_motos} filas con tipo_vehiculo='MOTOCICLETA DE 2 RUEDAS'")
+        df_orig = df_orig.loc[~mask_moto].reset_index(drop=True)
+
 
     df_orig.to_parquet(parquet_path, index=False)
 
