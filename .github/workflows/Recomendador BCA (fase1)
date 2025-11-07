@@ -1,0 +1,181 @@
+name: Recomendador BCA (fase1)
+
+on:
+  workflow_dispatch:
+    inputs:
+      yaml_path:
+        description: "Ruta del YAML de consultas (archivo de configuración de consultas y ajustes del recomendador)"
+        required: true
+        default: "recomendador/queries_examples.yaml"
+      outdir:
+        description: "Carpeta de salida en el workspace (ubicación local donde se guardarán los CSV generados antes de subirlos a Drive)"
+        required: true
+        default: "salida"
+      dataset_name:
+        description: "Nombre EXACTO del parquet a ingerir (si se deja vacío, se tomará el último 'bca_enriched_with_ine*.parquet' subido a la carpeta BCA_MONTHLY_FOLDER_ID)"
+        required: false
+        default: ""
+      print_rows:
+        description: "Filas por CSV a imprimir en el log (solo vista previa para revisión rápida en la ejecución)"
+        required: true
+        default: "30"
+
+jobs:
+  run-recommender:
+    runs-on: ubuntu-latest
+
+    # Variables de entorno (con significado entre paréntesis)
+    env:
+      GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64 }} # (Credenciales de Service Account codificadas en base64 para autenticarse en Google Drive)
+      GOOGLE_DRIVE_SCOPE: https://www.googleapis.com/auth/drive # (Alcance de permisos en Google Drive para listar/descargar/subir archivos)
+      BCA_MONTHLY_FOLDER_ID: ${{ secrets.BCA_MONTHLY_FOLDER_ID }} # (ID de carpeta origen en Drive donde se suben los datasets mensuales/parquet)
+      RECOMENDATOR_FOLDER_ID: ${{ secrets.RECOMENDATOR_FOLDER_ID }} # (ID de carpeta destino en Drive para subir los CSV generados por el recomendador)
+      PYTHONUNBUFFERED: "1" # (Salida de Python sin buffer para logs más inmediatos)
+
+    steps:
+      - name: Checkout (descarga el repo)
+        uses: actions/checkout@v4
+
+      - name: Set up Python (prepara intérprete)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install requirements (instala dependencias del repo)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Decode Google OAuth credentials (crea credentials.json desde el secret base64)
+        run: |
+          echo "$GOOGLE_OAUTH_B64" | base64 -d > credentials.json
+
+      - name: Select and download dataset (.parquet) from Drive (elige fichero exacto o último disponible y lo descarga)
+        id: gdrive
+        env:
+          DATASET_NAME: ${{ github.event.inputs.dataset_name }}
+        run: |
+          python - << 'PY'
+          import os, io, sys
+          from google.oauth2.service_account import Credentials
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaIoBaseDownload
+
+          cred_path = "credentials.json"
+          scope = os.environ.get("GOOGLE_DRIVE_SCOPE","https://www.googleapis.com/auth/drive").split(",")
+          folder_id = os.environ["BCA_MONTHLY_FOLDER_ID"]
+          dataset_name = os.environ.get("DATASET_NAME","").strip()
+
+          creds = Credentials.from_service_account_file(cred_path, scopes=scope)
+          svc = build("drive","v3",credentials=creds)
+
+          def download(file_id, name):
+            request = svc.files().get_media(fileId=file_id)
+            with open(name, "wb") as fh:
+              downloader = MediaIoBaseDownload(fh, request)
+              done = False
+              while not done:
+                status, done = downloader.next_chunk()
+            return name
+
+          if dataset_name:
+            # Búsqueda exacta por nombre
+            q = f"'{folder_id}' in parents and trashed=false and name='{dataset_name}'"
+          else:
+            # Último parquet que empiece por 'bca_enriched_with_ine' (por fecha de modificación)
+            q = f"'{folder_id}' in parents and trashed=false and name contains 'bca_enriched_with_ine' and name contains '.parquet'"
+
+          resp = svc.files().list(q=q, fields="files(id,name,modifiedTime)", orderBy="modifiedTime desc").execute()
+          files = resp.get("files", [])
+          if not files:
+            print("[ERROR] No se encontró el parquet solicitado en la carpeta de origen.", file=sys.stderr)
+            sys.exit(1)
+
+          f = files[0]
+          local_path = download(f["id"], f["name"])
+
+          # Exportar salida para siguientes steps usando GITHUB_OUTPUT
+          with open(os.environ["GITHUB_OUTPUT"], "a") as gh:
+            gh.write(f"parquet={local_path}\n")
+          PY
+
+      - name: Run recommender (ejecuta motor leyendo parquet directamente)
+        run: |
+          python recomendador/run_queries.py \
+            --data "${{ steps.gdrive.outputs.parquet }}" \
+            --yaml "${{ github.event.inputs.yaml_path }}" \
+            --outdir "${{ github.event.inputs.outdir }}"
+
+      - name: Print results to logs (muestra índice completo y previews de cada CSV)
+        run: |
+          echo "=== queries_index.csv ==="
+          cat "${{ github.event.inputs.outdir }}/queries_index.csv" || true
+          echo ""
+          echo "=== CSV previews ==="
+          rows=${{ github.event.inputs.print_rows }}
+          if [ -f "${{ github.event.inputs.outdir }}/queries_index.csv" ]; then
+            # Saltar cabecera y recorrer pares query,file
+            tail -n +2 "${{ github.event.inputs.outdir }}/queries_index.csv" | while IFS=, read -r qname qfile; do
+              echo ""
+              echo "---- $qname ----"
+              if [ -f "$qfile" ]; then
+                head -n "$rows" "$qfile" || true
+              else
+                echo "(missing file: $qfile)"
+              fi
+            done
+          else
+            echo "(No se generó queries_index.csv)"
+          fi
+
+      - name: Upload CSVs to Drive (sube índice y resultados a la carpeta destino)
+        run: |
+          python - << 'PY'
+          import os, mimetypes, csv
+          from google.oauth2.service_account import Credentials
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaFileUpload
+
+          cred_path = "credentials.json"
+          scope = os.environ.get("GOOGLE_DRIVE_SCOPE","https://www.googleapis.com/auth/drive").split(",")
+          folder_id = os.environ["RECOMENDATOR_FOLDER_ID"]
+          outdir = os.environ["OUTDIR"]
+
+          creds = Credentials.from_service_account_file(cred_path, scopes=scope)
+          svc = build("drive","v3",credentials=creds)
+
+          def find_in_folder(name):
+            q = f"'{folder_id}' in parents and trashed=false and name='{name}'"
+            r = svc.files().list(q=q, fields="files(id,name)").execute()
+            arr = r.get("files",[])
+            return arr[0]["id"] if arr else None
+
+          paths = []
+          idx = os.path.join(outdir, "queries_index.csv")
+          if os.path.isfile(idx):
+            paths.append(idx)
+            with open(idx, newline="") as f:
+              for row in csv.DictReader(f):
+                p = row.get("file")
+                if p and os.path.isfile(p):
+                  paths.append(p)
+          else:
+            for n in os.listdir(outdir):
+              if n.lower().endswith(".csv"):
+                paths.append(os.path.join(outdir,n))
+
+          for p in paths:
+            name = os.path.basename(p)
+            mime = mimetypes.guess_type(name)[0] or "text/csv"
+            media = MediaFileUpload(p, mimetype=mime, resumable=True)
+            existing = find_in_folder(name)
+            if existing:
+              svc.files().update(fileId=existing, media_body=media).execute()
+              print(f"[UPDATED] {name}")
+            else:
+              metadata = {"name": name, "parents": [folder_id], "mimeType": mime}
+              svc.files().create(body=metadata, media_body=media, fields="id").execute()
+              print(f"[CREATED] {name}")
+          PY
+        env:
+          OUTDIR: ${{ github.event.inputs.outdir }}
