@@ -36,8 +36,45 @@ def _to_any(df, out_path, sheet_name="bca_enriched"):
     else:
         df.to_parquet(out_path, index=False)
 
+# --- sanity helpers -------------------------------------------------
+def sanity_report(bca_df, ine_df, merged_df, label="post-merge"):
+    import pandas as pd  # por si no está en ámbito
+    n_bca = len(bca_df) if isinstance(bca_df, pd.DataFrame) else -1
+    n_ine = len(ine_df) if isinstance(ine_df, pd.DataFrame) else -1
+    n_merged = len(merged_df) if isinstance(merged_df, pd.DataFrame) else -1
+    ine_cols = [c for c in (merged_df.columns if n_merged >= 0 else [])
+                if c in {"unidades","antiguedad_media","p25_antiguedad","p50_antiguedad","p75_antiguedad",
+                         "mix_0_3_%","mix_4_7_%","mix_8mas_%"}]
+    na_rate = (merged_df[ine_cols].isna().mean().mean() if ine_cols else 0.0) if n_merged >= 0 else 1.0
+    print(f"[{label}] BCA={n_bca} INE={n_ine} MERGED={n_merged}  NA_rate(INE-cols)={na_rate:.2%}")
 
-# === end helpers ===
+    if n_bca > 0 and n_merged == 0:
+        print("!! ALERTA: merge produjo 0 filas (¿inner join, normalización, claves?)")
+    if na_rate > 0.70:
+        print("!! AVISO: >70% NA en columnas INE; posible problema de matching/normalización.")
+
+def clean_concat(pool):
+    """Elimina entradas None, vacías o todo-NA antes de concatenar."""
+    import pandas as pd
+    clean = []
+    for df in pool:
+        if df is None or not isinstance(df, pd.DataFrame):
+            continue
+        if df.empty or df.dropna(how="all").empty:
+            continue
+        clean.append(df)
+    return pd.concat(clean, axis=0, ignore_index=True) if clean else pd.DataFrame()
+
+def debug_pool(pool, label="pool"):
+    import pandas as pd
+    print(f"[{label}] size={len(pool)}")
+    for i, df in enumerate(pool):
+        if df is None:
+            print(f"  [{i}] None")
+        elif isinstance(df, pd.DataFrame):
+            print(f"  [{i}] DataFrame filas={len(df)} empty={df.empty}")
+        else:
+            print(f"  [{i}] tipo={type(df).__name__}")
 
 
 # =========================
