@@ -21,7 +21,7 @@ def _read_any(path):
         try:
             return pd.read_excel(path)
         except Exception:
-            return pd.read_excel(path)
+            return pd.read_csv(path)
 
 def _to_any(df, out_path, sheet_name="bca_enriched"):
     import pandas as pd
@@ -723,8 +723,8 @@ def run(bca_path: str, ine_path: str, muni_path: str, outdir: str):
     )
 
     # Persistencia (ahora 'enriched' = BCA COMPLETO + NUEVAS COLUMNAS DGT/INE)
-    enriched.to_parquet(os.path.join(outdir, "bca_enriched_final.parquet"), index=False)
-    enriched.to_excel(os.path.join(outdir, "bca_enriched_final.xlsx"), index=False)
+    _to_any(enriched, os.path.join(outdir, "bca_enriched_final.parquet"))
+    _to_any(enriched, os.path.join(outdir, "bca_enriched_final.xlsx"))
 
     # Diccionario
     data_dict = build_data_dictionary()
