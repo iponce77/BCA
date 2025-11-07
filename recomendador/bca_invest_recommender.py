@@ -279,5 +279,7 @@ def load_dataset(path: str | Path) -> pd.DataFrame:
         return pd.read_excel(path)
     elif path.suffix.lower() in [".csv",".txt"]:
         return pd.read_csv(path)
+    elif path.suffix.lower() == ".parquet":
+        return pd.read_parquet(path)
     else:
-        raise ValueError("Formato no soportado. Usa .xlsx o .csv")
+         raise ValueError("Formato no soportado. Usa .parquet, .xlsx o .csv")
