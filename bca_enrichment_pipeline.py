@@ -545,7 +545,7 @@ def _prioritized_union(bca_key, candidates, metric_cols):
 
     if not pool:
         return pd.DataFrame(columns=["_bca_idx"] + metric_cols + ["match_kind","geo_fallback"])
-    merged = pd.concat(pool, axis=0, ignore_index=True)
+    merged = clean_concat(pool)
     merged = merged.drop_duplicates(subset=["_bca_idx"], keep="first")
     return merged
 
@@ -765,11 +765,12 @@ def run(bca_path: str, ine_path: str, muni_path: str, outdir: str):
         on="_bca_idx",
         how="left"
     )
-
-    # Persistencia (ahora 'enriched' = BCA COMPLETO + NUEVAS COLUMNAS DGT/INE)
+    
+    sanity_report(bca, ine_norm, enriched, label="enriched")
+    sanity_report(bca, ine_norm, enriched, label="final-write")
     _to_any(enriched, os.path.join(outdir, "bca_enriched_final.parquet"))
     _to_any(enriched, os.path.join(outdir, "bca_enriched_final.xlsx"))
-
+  
     # Diccionario
     data_dict = build_data_dictionary()
     data_dict.to_csv(os.path.join(outdir, "data_dictionary.csv"), index=False)
