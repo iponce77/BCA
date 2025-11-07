@@ -33,7 +33,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt || true
-          pip install pandas pyarrow xlsxwriter google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+          pip install pandas pyarrow xlsxwriter openpyxl google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
 
       - name: Prepare workspace
         run: |
