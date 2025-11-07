@@ -61,13 +61,13 @@ def sanity_report(bca_df, ine_df, merged_df, label="post-merge"):
         print("!! AVISO: >70% NA en columnas INE; posible problema de matching/normalización.")
 
 def clean_concat(pool):
-    """Elimina entradas None, vacías o todo-NA antes de concatenar."""
     import pandas as pd
     clean = []
     for df in pool:
         if df is None or not isinstance(df, pd.DataFrame):
             continue
-        if df.empty or df.dropna(how="all").empty:
+        # descarta DF sin filas, sin columnas o TODO-NA (todas las celdas NA)
+        if df.empty or df.shape[1] == 0 or df.isna().all().all():
             continue
         clean.append(df)
     return pd.concat(clean, axis=0, ignore_index=True) if clean else pd.DataFrame()
