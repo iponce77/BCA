@@ -184,15 +184,6 @@ def normalize_ine(ine_df: pd.DataFrame, muni_df: pd.DataFrame) -> pd.DataFrame:
             "INE/DGT: faltan columnas mínimas (marca/modelo/anio/combustible/unidades/codigo_ine)."
         )
 
-    # columnas opcionales de estructura
-    edad_media = find_ine("antiguedad_media","edad_media")
-    p25 = find_ine("p25_antiguedad","p25_edad")
-    p50 = find_ine("p50_antiguedad","p50_edad","mediana_antiguedad")
-    p75 = find_ine("p75_antiguedad","p75_edad")
-    mix03 = find_ine("%_0_3","mix_0_3_%","mix_0_3","mix_03_ratio")
-    mix47 = find_ine("%_4_7","mix_4_7_%","mix_4_7","mix_47_ratio")
-    mix8m = find_ine("%_8_mas","mix_8mas_%","mix_8_mas","mix_8plus_ratio")
-
     # -------- Base plana INE --------
     base = pd.DataFrame({
         "marca":        ine_df[marca].map(_normalize_str),
@@ -203,6 +194,14 @@ def normalize_ine(ine_df: pd.DataFrame, muni_df: pd.DataFrame) -> pd.DataFrame:
         "codigo_ine":   ine_df[codine]
     })
     base["yyyymm"] = ine_df[yyyymm].apply(_to_yyyymm) if yyyymm else None
+
+    edad_media = find_ine("antiguedad_media","edad_media")
+    p25 = find_ine("p25_antiguedad","p25_edad")
+    p50 = find_ine("p50_antiguedad","p50_edad","mediana_antiguedad")
+    p75 = find_ine("p75_antiguedad","p75_edad")
+    mix03 = find_ine("%_0_3","mix_0_3_%","mix_0_3","mix_03_ratio")
+    mix47 = find_ine("%_4_7","mix_4_7_%","mix_4_7","mix_47_ratio")
+    mix8m = find_ine("%_8_mas","mix_8mas_%","mix_8_mas","mix_8plus_ratio")
 
     if edad_media: base["antiguedad_media"] = pd.to_numeric(ine_df[edad_media], errors="coerce")
     if p25:        base["p25_antiguedad"]   = pd.to_numeric(ine_df[p25], errors="coerce")
@@ -231,6 +230,23 @@ def normalize_ine(ine_df: pd.DataFrame, muni_df: pd.DataFrame) -> pd.DataFrame:
     muni_small = muni_df[[m_cod, m_prov]].drop_duplicates().copy()
     muni_small.columns = ["codigo_ine", "provincia"]
 
+    # ---------------------- [AÑADIDO AQUÍ] ----------------------
+    # Harmonizar codigo_ine en ambos DFs (maneja 4 dígitos -> zfill(5), tipos int/str, etc.)
+    def _ine_code_to_str(series: pd.Series) -> pd.Series:
+        s = series.astype("string")
+        s = s.str.replace(r"\.0$", "", regex=True).str.replace(r"\D", "", regex=True)
+        s = s.str.zfill(5)  # si venía '1234' -> '01234'
+        bad = s[~s.str.fullmatch(r"\d{5}", na=False)]
+        if len(bad) > 0:
+            raise ValueError(
+                f"codigo_ine inválido en {len(bad)} filas (esperado 5 dígitos). Ejemplos: {bad.head(3).tolist()}"
+            )
+        return s
+
+    base["codigo_ine"] = _ine_code_to_str(base["codigo_ine"])
+    muni_small["codigo_ine"] = _ine_code_to_str(muni_small["codigo_ine"])
+    # -------------------- [FIN AÑADIDO] -------------------------
+
     # Normalizamos provincia a texto canonical (upper/sin tildes)
     muni_small["provincia_norm"] = muni_small["provincia"].map(_normalize_str)
 
@@ -255,9 +271,7 @@ def normalize_ine(ine_df: pd.DataFrame, muni_df: pd.DataFrame) -> pd.DataFrame:
     esp_df["region"] = "ESP"
 
     out = pd.concat([bcn_df, cat_df, esp_df], axis=0, ignore_index=True)
-    # sólo regiones esperadas
-    out = out[out["region"].isin(["BCN","CAT","ESP"])].copy()
-    return out
+    return out[out["region"].isin(["BCN","CAT","ESP"])].copy()
 
 
 # =========================
