@@ -8,20 +8,27 @@ import numpy as np
 def _read_any(path):
     import pandas as pd
     p = str(path).lower()
+
     if p.endswith(".parquet"):
         return pd.read_parquet(path)
+
     if p.endswith(".xlsx") or p.endswith(".xls"):
-        return pd.read_excel(path)
+        # Forzamos openpyxl para evitar autodetecciones raras en CI
+        return pd.read_excel(path, engine="openpyxl")
+
     if p.endswith(".csv"):
-        return pd.read_csv(path) 
-    # fallback
+        # CSV simple; si te topas con problemas de encoding, añade encoding="utf-8"
+        return pd.read_csv(path)
+
+    # --- fallbacks por si la extensión miente ---
     try:
         return pd.read_parquet(path)
     except Exception:
         try:
-            return pd.read_excel(path)
+            return pd.read_excel(path, engine="openpyxl")
         except Exception:
             return pd.read_csv(path)
+
 
 def _to_any(df, out_path, sheet_name="bca_enriched"):
     import pandas as pd
