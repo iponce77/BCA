@@ -13,7 +13,7 @@ def _read_any(path):
     if p.endswith(".xlsx") or p.endswith(".xls"):
         return pd.read_excel(path)
     if p.endswith(".csv"):
-        return pd.read_excel(path)
+        return pd.read_csv(path) 
     # fallback
     try:
         return pd.read_parquet(path)
