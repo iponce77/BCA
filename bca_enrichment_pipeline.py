@@ -31,14 +31,11 @@ def _to_any(df, out_path, sheet_name="bca_enriched"):
     elif p.endswith(".csv"):
         df.to_csv(out_path, index=False)
     elif p.endswith(".xlsx") or p.endswith(".xls"):
-        with pd.ExcelWriter(
-            out_path,
-            engine="xlsxwriter",
-            engine_kwargs={"options": {"strings_to_urls": False}},
-        ) as xw:
+        with pd.ExcelWriter(out_path, engine="openpyxl") as xw:
             df.to_excel(xw, sheet_name=sheet_name, index=False)
     else:
         df.to_parquet(out_path, index=False)
+
 
 # === end helpers ===
 
