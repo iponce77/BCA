@@ -111,7 +111,7 @@ def apply_global_filters(df: pd.DataFrame, g: dict) -> pd.DataFrame:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", required=True, help="Ruta al .xlsx o .csv de BCA enriquecido")
+    ap.add_argument("--data", required=True, help="Ruta al .parquet / .xlsx / .csv de BCA enriquecido")
     ap.add_argument("--yaml", required=True, help="Ruta al YAML de consultas")
     ap.add_argument("--outdir", default=".", help="Directorio de salida (CSV)")
     args = ap.parse_args()
