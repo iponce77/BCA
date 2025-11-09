@@ -43,7 +43,7 @@ jobs:
         run: |
           if [ -n "${{ inputs.date_yyyymmdd }}" ]; then
             echo "Forzando fecha: ${{ inputs.date_yyyymmdd }}"
-            TODAY="${{ inputs.date_yyyymmdd }}" python download_from_drive.py
+            TODAY="${{ inputs.date_yyyymmdd }}" STRICT_TODAY=1 PREFER_BASE=1 python download_from_drive.py
           else
             HOY=$(date +%Y%m%d)
             TODAY="$HOY" python download_from_drive.py
@@ -62,8 +62,13 @@ jobs:
           fi
 
           CANDIDATO="fichas_vehiculos_${FECHA}.xlsx"
+          CANDIDATO_COMPLETO="fichas_vehiculos_${FECHA}_completo.xlsx"
 
           if [ -f "$CANDIDATO" ]; then
+            EXCEL_IN="$CANDIDATO"
+          elif [ -f "$CANDIDATO_COMPLETO" ]; then
+            # Compatibilidad: si sólo hay *_completo del día, crear base a partir de él
+            cp -f "$CANDIDATO_COMPLETO" "$CANDIDATO"
             EXCEL_IN="$CANDIDATO"
           else
             # Último base disponible (no *_completo.xlsx)
@@ -258,3 +263,4 @@ jobs:
       - name: "Upload results to Google Drive"
         if: ${{ steps.guard_fase2.outcome == 'success' }}
         run: python upload_fase2.py
+
