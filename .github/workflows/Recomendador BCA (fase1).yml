@@ -24,13 +24,13 @@ jobs:
   run-recommender:
     runs-on: ubuntu-latest
 
-    # Variables de entorno (con significado entre paréntesis)
     env:
-      GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64_FULL }} # (Credenciales de Service Account codificadas en base64 para autenticarse en Google Drive)
-      GOOGLE_DRIVE_SCOPE: https://www.googleapis.com/auth/drive # (Alcance de permisos en Google Drive para listar/descargar/subir archivos)
-      BCA_MONTHLY_FOLDER_ID: ${{ secrets.BCA_MONTHLY_FOLDER_ID }} # (ID de carpeta origen en Drive donde se suben los datasets mensuales/parquet)
-      RECOMENDATOR_FOLDER_ID: ${{ secrets.RECOMENDATOR_FOLDER_ID }} # (ID de carpeta destino en Drive para subir los CSV generados por el recomendador)
-      PYTHONUNBUFFERED: "1" # (Salida de Python sin buffer para logs más inmediatos)
+      # OAuth refresh token en base64 (NO service account)
+      GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64_FULL }}
+      GOOGLE_DRIVE_SCOPE: https://www.googleapis.com/auth/drive
+      BCA_MONTHLY_FOLDER_ID: ${{ secrets.BCA_MONTHLY_FOLDER_ID }}
+      RECOMENDATOR_FOLDER_ID: ${{ secrets.RECOMENDATOR_FOLDER_ID }}
+      PYTHONUNBUFFERED: "1"
 
     steps:
       - name: Checkout (descarga el repo)
@@ -46,28 +46,27 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Decode Google OAuth credentials (crea credentials.json desde el secret base64)
+      # Evita que alguna lib intente usar service account por variable de entorno
+      - name: Force OAuth (no service account)
         run: |
-          echo "$GOOGLE_OAUTH_B64" | base64 -d > credentials.json
+          unset GOOGLE_APPLICATION_CREDENTIALS || true
 
       - name: Select and download dataset (.parquet) from Drive (elige fichero exacto o último disponible y lo descarga)
         id: gdrive
         env:
           DATASET_NAME: ${{ github.event.inputs.dataset_name }}
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           python - << 'PY'
           import os, io, sys
-          from google.oauth2.service_account import Credentials
-          from googleapiclient.discovery import build
           from googleapiclient.http import MediaIoBaseDownload
+          from gdrive_auth import authenticate_drive
 
-          cred_path = "credentials.json"
-          scope = os.environ.get("GOOGLE_DRIVE_SCOPE","https://www.googleapis.com/auth/drive").split(",")
+          scope = os.environ.get("GOOGLE_DRIVE_SCOPE","https://www.googleapis.com/auth/drive")
           folder_id = os.environ["BCA_MONTHLY_FOLDER_ID"]
           dataset_name = os.environ.get("DATASET_NAME","").strip()
 
-          creds = Credentials.from_service_account_file(cred_path, scopes=scope)
-          svc = build("drive","v3",credentials=creds)
+          svc = authenticate_drive()
 
           def download(file_id, name):
             request = svc.files().get_media(fileId=file_id)
@@ -85,7 +84,13 @@ jobs:
             # Último parquet que empiece por 'bca_enriched_with_ine' (por fecha de modificación)
             q = f"'{folder_id}' in parents and trashed=false and name contains 'bca_enriched_with_ine' and name contains '.parquet'"
 
-          resp = svc.files().list(q=q, fields="files(id,name,modifiedTime)", orderBy="modifiedTime desc").execute()
+          resp = svc.files().list(
+              q=q,
+              fields="files(id,name,modifiedTime)",
+              orderBy="modifiedTime desc",
+              pageSize=1000,
+              includeItemsFromAllDrives=True, supportsAllDrives=True
+          ).execute()
           files = resp.get("files", [])
           if not files:
             print("[ERROR] No se encontró el parquet solicitado en la carpeta de origen.", file=sys.stderr)
@@ -129,24 +134,23 @@ jobs:
           fi
 
       - name: Upload CSVs to Drive (sube índice y resultados a la carpeta destino)
+        env:
+          OUTDIR: ${{ github.event.inputs.outdir }}
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           python - << 'PY'
           import os, mimetypes, csv
-          from google.oauth2.service_account import Credentials
-          from googleapiclient.discovery import build
           from googleapiclient.http import MediaFileUpload
+          from gdrive_auth import authenticate_drive
 
-          cred_path = "credentials.json"
-          scope = os.environ.get("GOOGLE_DRIVE_SCOPE","https://www.googleapis.com/auth/drive").split(",")
           folder_id = os.environ["RECOMENDATOR_FOLDER_ID"]
           outdir = os.environ["OUTDIR"]
 
-          creds = Credentials.from_service_account_file(cred_path, scopes=scope)
-          svc = build("drive","v3",credentials=creds)
+          svc = authenticate_drive()
 
           def find_in_folder(name):
             q = f"'{folder_id}' in parents and trashed=false and name='{name}'"
-            r = svc.files().list(q=q, fields="files(id,name)").execute()
+            r = svc.files().list(q=q, fields="files(id,name)", pageSize=1).execute()
             arr = r.get("files",[])
             return arr[0]["id"] if arr else None
 
@@ -174,8 +178,7 @@ jobs:
               print(f"[UPDATED] {name}")
             else:
               metadata = {"name": name, "parents": [folder_id], "mimeType": mime}
-              svc.files().create(body=metadata, media_body=media, fields="id").execute()
+              svc.files().create(body=metadata, media_body=media, fields="id",
+                                 supportsAllDrives=True).execute()
               print(f"[CREATED] {name}")
           PY
-        env:
-          OUTDIR: ${{ github.event.inputs.outdir }}
