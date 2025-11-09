@@ -19,24 +19,11 @@ demand:
 
 # Lista de consultas. Puedes duplicar/editar las que quieras.
 queries:
-
-  - name: "Amigo - <10k automatico <8 años (beneficio + rotación, ESP)"
-    region: esp
+  - name: "Top20 Gasolina BCN (venta rápida)"
+    region: bcn
     filters:
-      max_age_years: 8
-      max_price: 10000
+      fuel_include: GASOLINA
     prefer_fast: true
     ignore_rotation: false
-    brand_only: false
-    top_n: 19
+    top_n: 20
 
-  - name: "Amigo - <10k automatico <8 años (máximo margen, ESP)"
-    region: esp
-    filters:
-      max_age_years: 8
-      max_price: 10000
-      transmission: automatic
-    prefer_fast: false
-    ignore_rotation: true
-    brand_only: false
-    top_n: 19
