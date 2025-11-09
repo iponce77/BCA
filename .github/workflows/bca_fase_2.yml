@@ -20,6 +20,7 @@ jobs:
       BCA_PASS: ${{ secrets.BCA_PASS }}
       GDRIVE_FOLDER_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
       GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64 }}
+      GOOGLE_DRIVE_SCOPE: https://www.googleapis.com/auth/drive.file  # ← opcional pero aconsejado
       DEST_COUNTRY: Spain   # <-- Transporte
 
     steps:
@@ -36,7 +37,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           python -m playwright install chromium
-
+          # opcional si Playwright lo requiere en tu runner:
+          # python -m playwright install-deps
 
       # --- Descarga de Fase 1 (respeta fecha forzada si se indica) ---
       - name: "Download Phase 1 Excel from Google Drive"
@@ -67,11 +69,11 @@ jobs:
           if [ -f "$CANDIDATO" ]; then
             EXCEL_IN="$CANDIDATO"
           elif [ -f "$CANDIDATO_COMPLETO" ]; then
-            # Compatibilidad: si sólo hay *_completo del día, crear base a partir de él
+            # compat: si solo hay *_completo del día, crear base a partir de él
             cp -f "$CANDIDATO_COMPLETO" "$CANDIDATO"
             EXCEL_IN="$CANDIDATO"
           else
-            # Último base disponible (no *_completo.xlsx)
+            # último base disponible (no *_completo.xlsx)
             LATEST=$(ls -1 fichas_vehiculos_*.xlsx 2>/dev/null | grep -E 'fichas_vehiculos_[0-9]{8}\.xlsx$' | grep -v '_completo' | sort -r | head -n 1 || true)
             if [ -z "${LATEST:-}" ]; then
               echo "⛔ No hay ningún Excel base disponible en el workspace."
@@ -97,7 +99,6 @@ jobs:
             sleep 20
           done
 
-      # --- Guard de columnas requeridas por economics_merge (para fases siguientes) ---
       - name: "Verify Fase 2 columns (lot_status, winning_bid, currency)"
         id: guard_fase2
         if: ${{ steps.preparar.outputs.skip != 'true' }}
@@ -216,7 +217,7 @@ jobs:
           # Nota: el script auto-detecta transport_price_eur/transport_eur y usa commission_total_eur
 
       - name: "Verify Gastos output columns"
-        id: guard_gastos   # <-- añadido para que se pueda referenciar en el if posterior
+        id: guard_gastos
         run: >
           python -c "import os,sys,pandas as pd;
           f=os.environ.get('EXCEL_IN'); df=pd.read_excel(f);
@@ -238,7 +239,6 @@ jobs:
           echo "✅ Copia final creada: $EXCEL_FINAL"
           echo "EXCEL_FINAL=$EXCEL_FINAL" >> $GITHUB_ENV
 
-      # (opcional pero recomendado) verificación de ruta
       - name: "Debug final file path"
         if: ${{ steps.guard_gastos.outcome == 'success' }}
         shell: bash
@@ -246,7 +246,7 @@ jobs:
           echo "EXCEL_FINAL=$EXCEL_FINAL"
           ls -la
           ls -la out || true
-        
+
       - name: "Upload artifacts"
         if: ${{ steps.preparar.outputs.skip != 'true' }}
         uses: actions/upload-artifact@v4
@@ -254,13 +254,13 @@ jobs:
           name: resultados_bca_fase2
           path: |
             ${{ env.EXCEL_IN }}
+            ${{ env.EXCEL_FINAL }}    # ← añade el _completo
             errores_fase2*.csv
             errores_fase2_links_persistentes.csv
             Fase2*.log
-          if-no-files-found: ignore   # evita fallo si no hay artefactos
+          if-no-files-found: ignore
 
       # --- Subida a Drive ---
       - name: "Upload results to Google Drive"
-        if: ${{ steps.guard_fase2.outcome == 'success' }}
+        if: ${{ steps.guard_gastos.outcome == 'success' }}   # ← subir cuando ya existe EXCEL_FINAL
         run: python upload_fase2.py
-
