@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64 }}
+      GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64_FULL }}
       GOOGLE_DRIVE_SCOPE: https://www.googleapis.com/auth/drive
       BCA_MONTHLY_FOLDER_ID: ${{ secrets.BCA_MONTHLY_FOLDER_ID }}
 
