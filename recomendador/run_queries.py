@@ -154,6 +154,10 @@ def main():
         ignore_rotation = bool(q.get("ignore_rotation", False))
         brand_only = bool(q.get("brand_only", False))
         top_n = int(q.get("top_n", 10))
+        selection = str(q.get("selection","mean")).lower()
+        cluster = q.get("cluster", {}) or {}
+        min_listings_per_group = int(q.get("min_listings_per_group", 1))
+        prefer_cheapest_sort = bool(q.get("prefer_cheapest_sort", False))
 
         # PATCH: consultas especiales paramétricas via YAML:
         #   special:
@@ -199,6 +203,17 @@ def main():
                 ignore_rotation=ignore_rotation,
                 prefer_fast=prefer_fast,
                 brand_only=brand_only,
+                # NUEVO: selección y filtros avanzados
+                selection=selection,  # "mean" | "cheapest"
+                year_exact=filters.get("year_exact"),
+                segment_include=filters.get("segment") or filters.get("segment_include"),
+                segment_exclude=filters.get("segment_exclude"),
+                mileage_min=filters.get("mileage_min"),
+                mileage_max=filters.get("mileage_max") or filters.get("max_km"),
+                include_sale_country=bool(cluster.get("include_sale_country", True)),
+                include_sale_name=bool(cluster.get("include_sale_name", True)),
+                min_listings_per_group=min_listings_per_group,
+                prefer_cheapest_sort=prefer_cheapest_sort,
                 n=top_n
             )
             safe = sanitize_filename(qname)
