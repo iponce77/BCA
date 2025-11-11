@@ -24,7 +24,7 @@ queries:
     filters:
       fuel_include: GASOLINA
       year_exact: 2022
-      segment: COMPACTO
+      segment: C
       mileage_max: 100000     # tope de kms (tu script admite km/kilometros/mileage/odometro)
       max_price: 20000        # opcional
     selection: cheapest        # << MODO BARATO
