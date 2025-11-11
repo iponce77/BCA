@@ -19,11 +19,21 @@ demand:
 
 # Lista de consultas. Puedes duplicar/editar las que quieras.
 queries:
-  - name: "Top20 Gasolina BCN (venta rápida)"
+  - name: "Top20 gasolina 2022 segmento compacto BCN (baratos)"
     region: bcn
     filters:
       fuel_include: GASOLINA
-    prefer_fast: true
-    ignore_rotation: false
-    top_n: 20
+      year_exact: 2022
+      segment: COMPACTO
+      mileage_max: 100000     # tope de kms (tu script admite km/kilometros/mileage/odometro)
+      max_price: 20000        # opcional
+    selection: cheapest        # << MODO BARATO
+    cluster:
+      include_sale_country: true
+      include_sale_name: true  # separa por país y subasta
+    prefer_fast: true          # mantiene el “boost” de rotación
+    prefer_cheapest_sort: false  # ponlo en true si quieres ver estrictamente los más baratos arriba
+    min_listings_per_group: 2    # descarta clusters con 1 sola muestra (ruidosos)
+    top_n: 30
+
 
