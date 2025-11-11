@@ -206,7 +206,12 @@ class BCAInvestRecommender:
         if seg_col:
             if segment_include is not None:
                 vals = {str(x).strip().upper() for x in (segment_include if isinstance(segment_include,(list,tuple,set)) else [segment_include])}
-                df = df[df[seg_col].astype(str).str.normalize("NFKD").str.encode("ascii","ignore").str.decode().str.upper().isin(vals)]            
+                df = df[df[seg_col].astype(str)
+                                   .str.normalize("NFKD")
+                                   .str.encode("ascii", "ignore")
+                                   .str.decode("ascii")
+                                   .str.upper()
+                                   .isin(vals)]  
             if segment_exclude is not None:
                 vals = {str(x).strip().upper() for x in (segment_exclude if isinstance(segment_exclude,(list,tuple,set)) else [segment_exclude])}
                 df = df[~df[seg_col].astype(str).str.normalize("NFKD").str.encode("ascii","ignore").str.decode().str.upper().isin(vals)]
