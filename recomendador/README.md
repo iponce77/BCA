@@ -119,3 +119,4 @@ Casos especiales (agregados por país/subasta para un modelo concreto):
 ---
 
 Cualquier duda, edita `queries_examples.yaml` y vuelve a ejecutar `run_queries.py`. Si necesitas nuevos tipos de consulta, dime el formato que quieres y lo añadimos.
+
