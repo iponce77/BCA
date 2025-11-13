@@ -1,0 +1,92 @@
+name: BCA Fase 1 (ALT) · 1Anew → MERGE_ONLY → 1B_enrich
+
+on:
+  schedule:
+    - cron:  '5 0 * * *'        # 00:05 UTC
+  workflow_dispatch:
+
+jobs:
+  bca-fase1-alt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    env:
+      BCA_USER: ${{ secrets.BCA_USER }}
+      BCA_PASS: ${{ secrets.BCA_PASS }}
+      GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64 }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.11
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m playwright install chromium
+
+      - name: Restaurar token.pickle desde base64
+        run: echo "${{ secrets.TOKEN_PICKLE_B64 }}" | base64 -d > token.pickle
+
+      # ========= FASE 1A NEW =========
+      - name: Ejecutar FASE1ANEW (exports + links únicos)
+        run: |
+          n=0
+          until [ $n -ge 2 ]
+          do
+            python FASE1ANEW.py && break
+            n=$((n+1))
+            echo "Fallo en FASE1ANEW, esperando 2 minutos antes de reintentar..."
+            sleep 120
+          done
+
+      # ========= MERGE_ONLY =========
+      # Une todos los XLS exportados (./_output_excels) con el Excel de fallback (fichas_vehiculos_*.xlsx)
+      # y genera el Excel normalizado de hoy: fichas_vehiculos_${HOY}.xlsx
+      - name: Ejecutar MERGE_ONLY (unificar exports + fallback)
+        run: |
+          HOY=$(date +%Y%m%d)
+          # Sin argumentos: autodetecta _output_excels y el último fichas_vehiculos_*.xlsx
+          python MERGE_ONLY.py
+          ls -l "fichas_vehiculos_${HOY}.xlsx"
+
+      # ========= FASE 1B ENRICH =========
+      - name: Ejecutar Fase1B_enrich (fallback + enrich-extra)
+        run: |
+          HOY=$(date +%Y%m%d)
+          n=0
+          until [ $n -ge 2 ]
+          do
+            python Fase1B_enrich.py \
+              -i "fichas_vehiculos_${HOY}.xlsx" \
+              -c 12 \
+              --enrich-extra \
+              --enrich-concurrency 10 \
+              --enrich-delay-ms 50 \
+              --enrich-jitter-ms 200 \
+              -s bca_storage_phase1.json && break
+            n=$((n+1))
+            echo "Fallo en Fase1B_enrich, esperando 2 minutos antes de reintentar..."
+            sleep 120
+          done
+
+      # ========= Artefactos =========
+      - name: Subir Excel resultado (artefacto)
+        uses: actions/upload-artifact@v4
+        with:
+          name: fichas_vehiculos
+          path: |
+            fichas_vehiculos_*.xlsx
+            *_completo.xlsx
+
+      # ========= Upload a Google Drive (carpeta ALT) =========
+      - name: Subir resultados a Google Drive (ALT)
+        run: python upload_fase1.py
+        env:
+          GDRIVE_FOLDER_ID: ${{ secrets.FASE1_ALT_FOLDER_ID }}
+          GOOGLE_OAUTH_B64: ${{ secrets.GOOGLE_OAUTH_B64 }}
