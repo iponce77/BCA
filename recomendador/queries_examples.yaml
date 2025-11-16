@@ -18,22 +18,56 @@ demand:
   weight_concentration: 0.0
 
 # Lista de consultas. Puedes duplicar/editar las que quieras.
+# IMPORTANTE: por defecto "vehículo barato" = selección "cheapest" (vehículo óptimo)
+# Todas las salidas de listados se conforman al orden/columns de negocio.
+
 queries:
-  - name: "Top20 gasolina 2022 segmento compacto BCN (baratos)"
+  # ---------------- Q1 ----------------
+  - name: "Q1 - Mejor subasta para BMW X1 (Top 20)"
+    type: q1
+    model: "BMW X1"
     region: bcn
+    top_n: 20
     filters:
-      fuel_include: GASOLINA
-      year_exact: 2022
-      segment: C
-      mileage_max: 100000     # tope de kms (tu script admite km/kilometros/mileage/odometro)
-      max_price: 20000        # opcional
-    selection: cheapest        # << MODO BARATO
-    cluster:
-      include_sale_country: true
-      include_sale_name: true  # separa por país y subasta
-    prefer_fast: true          # mantiene el “boost” de rotación
-    prefer_cheapest_sort: false  # ponlo en true si quieres ver estrictamente los más baratos arriba
-    min_listings_per_group: 2    # descarta clusters con 1 sola muestra (ruidosos)
-    top_n: 30
+      year_from: 2018
+      year_to: 2024
+      mileage_max: 120000
+
+  # ---------------- Q2 ----------------
+  - name: "Q2 - Orden de precio dentro de BMW (vehículo óptimo por modelo)"
+    type: q2
+    brand: "BMW"
+    region: bcn
+
+  # ---------------- Q3 ----------------
+  - name: "Q3 - Orden de precio en segmento SUV compacto (Top 20)"
+    type: q3
+    segment: "SUV"
+    region: bcn
+    top_n: 20
+
+  # ---------------- Q4 ----------------
+  - name: "Q4 - Dónde se vende mejor: SEAT León 2022"
+    type: q4
+    modelo_base: "LEON"
+    year: 2022
+
+  # ---------------- Q5 ----------------
+  - name: "Q5 - Mejor fuel y gap por región: SEAT León 2022"
+    type: q5
+    modelo_base: "LEON"
+    year: 2022
+
+  # ---------------- Consulta genérica (legacy compatible) ----------------
+  - name: "GEN - Top 15 baratos BCN (<=15k, <=6 años, automáticos)"
+    type: generic
+    region: bcn
+    top_n: 15
+    filters:
+      max_age_years: 6
+      max_price: 15000
+      gearbox: automatic
+    selection: cheapest  # explícito pero ya es el default
+
 
 
