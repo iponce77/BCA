@@ -512,18 +512,71 @@ class BCAInvestRecommender:
 
 
     def q2_price_order_within_brand(self, brand: str, region: str="bcn",
-                                    year_from: Optional[int]=None,
-                                    year_to: Optional[int]=None,
-                                    km_max: Optional[float]=None) -> pd.DataFrame:
-        """Dentro de una marca: orden de precio de todos los modelos (vehículo óptimo por modelo_base)."""
+                                    min_year: int = 2020,
+                                    max_km: float = 100000.0,
+                                    mode: str = "cheapest") -> pd.DataFrame:
+        """Dentro de una marca: un solo vehículo por modelo_base_x.
+
+        - Filtra por marca (columna 'marca').
+        - Aplica filtros estándar: año >= min_year, km <= max_km (configurables).
+        - Agrupa por modelo_base_x (o equivalente) y selecciona:
+            * mode="cheapest"   -> la unidad con menor precio_final_eur.
+            * mode="max_margin" -> la unidad con mayor margin_abs.
+        - Ordena el resultado:
+            * cheapest   -> por precio_final_eur ascendente.
+            * max_margin -> por margin_abs descendente.
+        """
         df = self.df.copy()
+
+        # 1) Filtro por marca
         if "marca" in df.columns:
             df = df[df["marca"].astype(str).str.contains(brand, case=False, na=False)]
-        # seleccionar óptimo por modelo_base
-        rec_local = BCAInvestRecommender(df, cfg=self.cfg)
-        best = rec_local.recommend_best(region=region, selection="cheapest", n=10**9)  # trae todos
-        # orden por precio
-        return best.sort_values("precio_final_eur", ascending=True).reset_index(drop=True)
+
+        # 2) Filtro por año mínimo
+        if min_year is not None and "anio" in df.columns:
+            df = df[pd.to_numeric(df["anio"], errors="coerce") >= int(min_year)]
+
+        # 3) Filtro por km máximo
+        if max_km is not None:
+            km_col = next((c for c in ["mileage","km","kilometros","kilómetros","odometro","odómetro"]
+                           if c in df.columns), None)
+            if km_col:
+                df = df[pd.to_numeric(df[km_col], errors="coerce") <= float(max_km)]
+
+        if df.empty:
+            return self._format_output(df).head(0)
+
+        # 4) Columna de modelo base
+        model_col = "modelo_base_x"
+        if model_col not in df.columns:
+            for c in ["modelo_base","modelo_base_y","modelo_base_match","modelo"]:
+                if c in df.columns:
+                    model_col = c
+                    break
+
+        # 5) Asegurar numéricos
+        df["precio_final_eur"] = pd.to_numeric(df.get("precio_final_eur", 0.0), errors="coerce")
+        df["margin_abs"] = pd.to_numeric(df.get("margin_abs", 0.0), errors="coerce")
+
+        g = df.groupby(model_col, dropna=False)
+
+        mode_l = (mode or "cheapest").lower()
+        if mode_l == "max_margin":
+            idx = g["margin_abs"].idxmax()
+        else:
+            # por defecto cheapest
+            idx = g["precio_final_eur"].idxmin()
+
+        df_sel = df.loc[idx].copy()
+
+        # 6) Orden final
+        if mode_l == "max_margin":
+            df_sel = df_sel.sort_values("margin_abs", ascending=False)
+        else:
+            df_sel = df_sel.sort_values("precio_final_eur", ascending=True)
+
+        # 7) Formatear salida al layout estándar (modelo_base_x, year_bca, etc.)
+        return self._format_output(df_sel).reset_index(drop=True)
 
     def q3_price_order_within_segment(self, segment: str, region: str="bcn",
                                       top_n: int=20,
