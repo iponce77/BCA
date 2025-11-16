@@ -91,8 +91,15 @@ def _normalize_str(x: str) -> str:
     if pd.isna(x):
         return None
     x = str(x).strip().upper()
-    x = ''.join(c for c in unicodedata.normalize('NFKD', x) if not unicodedata.combining(c))
-    x = ' '.join(x.split())
+    # quitar tildes
+    x = ''.join(
+        c for c in unicodedata.normalize('NFKD', x)
+        if not unicodedata.combining(c)
+    )
+    # quitar signos de puntuación, dejar solo letras/números/espacios
+    x = re.sub(r"[^\w\s]", " ", x)
+    # colapsar espacios
+    x = " ".join(x.split())
     return x if x != "" else None
 
 def _safe_int(x):
