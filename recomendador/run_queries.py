@@ -1,54 +1,51 @@
+# -*- coding: utf-8 -*-
 import re
 import argparse, sys, yaml
 import pandas as pd
 from pathlib import Path
 import importlib.util
 
+OUTPUT_COLS = [
+    "link_ficha","make_clean","modelo_base","segmento","year","mileage","fuel_type",
+    "transmission-sale_country","auction_name","end_date","winning_bid",
+    "precio_final_eur","precio_venta_ganvam","margin_abs","vat_type",
+    "units_abs_bcn","units_abs_cat","units_abs_esp"
+]
+
 def normalize_fuel(x: str) -> str:
-    if x is None:
-        return ""
+    if x is None: return ""
     v = str(x).strip().lower()
-    # normalización simple
-    if "bev" in v or "eléctr" in v or "electric" in v:
-        return "BEV"
-    if "diesel" in v or "diésel" in v:
-        return "DIESEL"
-    if "gas" in v and "lina" in v:
-        return "GASOLINA"
-    if "phev" in v or ("híbr" in v and "ench" in v) or "plug-in" in v:
-        return "PHEV"
-    if "hibr" in v or "hybrid" in v:
-        return "HEV"
-    # deja tal cual si no reconocemos
+    if "bev" in v or "eléctr" in v or "electric" in v: return "BEV"
+    if "diesel" in v or "diésel" in v: return "DIESEL"
+    if "gas" in v and "lina" in v: return "GASOLINA"
+    if "phev" in v or ("híbr" in v and "ench" in v) or "plug-in" in v: return "PHEV"
+    if "hibr" in v or "hybrid" in v: return "HEV"
     return v.upper()
 
 def filter_by_fuel(df, include=None, exclude=None):
-    if "combustible_norm" not in df.columns:
+    if "combustible_norm" not in df.columns and "fuel_type" not in df.columns:
         return df
-    col = df["combustible_norm"].map(normalize_fuel)
+    base = df.get("combustible_norm", df.get("fuel_type")).map(normalize_fuel)
     if include:
         inc = {normalize_fuel(x) for x in (include if isinstance(include,(list,set,tuple)) else [include])}
-        df = df[col.isin(inc)]
+        df = df[base.isin(inc)]
     if exclude:
         exc = {normalize_fuel(x) for x in (exclude if isinstance(exclude,(list,set,tuple)) else [exclude])}
-        df = df[~col.isin(exc)]
+        df = df[~base.isin(exc)]
     return df
 
 def normalize_transmission(x: str) -> str:
-    if x is None:
-        return ""
+    if x is None: return ""
     v = str(x).strip().lower()
-    # patrones ES/EN típicos
     if any(k in v for k in ["auto", "autom", "aut.", "automática", "automatica"]):
         return "automatic"
-    if any(k in v for k in ["manual"]):
+    if "manual" in v:
         return "manual"
     return v
 
 def filter_by_transmission(df, want):
     if not want or "transmission" not in df.columns:
         return df
-    # permite string o lista
     if isinstance(want, (list, tuple, set)):
         target = set()
         for w in want:
@@ -61,7 +58,6 @@ def filter_by_transmission(df, want):
         t = "automatic" if "auto" in s else ("manual" if "man" in s else s)
         col = df["transmission"].map(normalize_transmission)
         return df[col == t]
-
 
 def load_module(path):
     spec = importlib.util.spec_from_file_location("bca_invest_recommender", str(path))
@@ -77,21 +73,17 @@ def normalize_lot_status(s: str) -> bool:
     return (v == "sold") or ("sold" in v) or (v in {"vendido"}) or ("sale ended" in v) or ("closed" in v)
 
 def sanitize_filename(name: str) -> str:
-    # Sustituye caracteres prohibidos en Windows por "_"
     safe = re.sub(r'[<>:"/\\|?*]', '_', str(name))
-    # Opcional: elimina dobles espacios y recorta
     safe = re.sub(r'\s+', ' ', safe).strip()
     return safe
 
 def apply_global_filters(df: pd.DataFrame, g: dict) -> pd.DataFrame:
     out = df.copy()
-    
-    # Transmission (opcional)
+
+    # Transmission / Fuel (global)
     trans = g.get("transmission") or g.get("gearbox")
     if trans:
         out = filter_by_transmission(out, trans)
-
-    # Fuel (opcional) — global
     fuel_inc = g.get("fuel_include") or g.get("combustible_include")
     fuel_exc = g.get("fuel_exclude") or g.get("combustible_exclude")
     out = filter_by_fuel(out, include=fuel_inc, exclude=fuel_exc)
@@ -109,6 +101,39 @@ def apply_global_filters(df: pd.DataFrame, g: dict) -> pd.DataFrame:
 
     return out
 
+def ensure_output_cols(df: pd.DataFrame) -> pd.DataFrame:
+    """Garantiza que todas las salidas tengan SOLO OUTPUT_COLS en ese orden.
+       Si faltan campos, intenta rellenar mapeando/derivando con heurísticas
+       consistentes con el motor."""
+    out = df.copy()
+    # Derivados/mapeos mínimos para layout
+    if "auction_name" not in out.columns and "sale_name" in out.columns:
+        out["auction_name"] = out["sale_name"]
+    if "year" not in out.columns:
+        for c in ["anio","Año","year_bca"]:
+            if c in out.columns:
+                out["year"] = out[c]; break
+    if "mileage" not in out.columns:
+        for c in ["km","kilometros","kilómetros","odometro","odómetro"]:
+            if c in out.columns:
+                out["mileage"] = out[c]; break
+    if "fuel_type" not in out.columns and "combustible_norm" in out.columns:
+        out["fuel_type"] = out["combustible_norm"]
+    if "modelo_base" not in out.columns:
+        for c in ["modelo_base_x","modelo_base_y","modelo_base_match","modelo"]:
+            if c in out.columns:
+                out["modelo_base"] = out[c]; break
+    # transmission-sale_country
+    if "transmission-sale_country" not in out.columns:
+        t = out.get("transmission", "")
+        sc = out.get("sale_country", "")
+        out["transmission-sale_country"] = t.astype(str).str.strip() + " - " + sc.astype(str).str.strip()
+
+    for c in OUTPUT_COLS:
+        if c not in out.columns:
+            out[c] = pd.NA
+    return out[OUTPUT_COLS]
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True, help="Ruta al .parquet / .xlsx / .csv de BCA enriquecido")
@@ -116,6 +141,7 @@ def main():
     ap.add_argument("--outdir", default=".", help="Directorio de salida (CSV)")
     args = ap.parse_args()
 
+    # Cargar módulo del motor
     mod = load_module(Path(__file__).parent / "bca_invest_recommender.py")
     df = mod.load_dataset(args.data)
 
@@ -124,6 +150,7 @@ def main():
     global_filters = conf.get("global_filters", {})
     demand = conf.get("demand", {})
 
+    # Filtro global de datos
     df = apply_global_filters(df, global_filters)
 
     # Build config
@@ -141,85 +168,107 @@ def main():
 
     rec = mod.BCAInvestRecommender(df, cfg=rcfg)
 
-    outdir = Path(args.outdir)
-    outdir.mkdir(parents=True, exist_ok=True)
+    outdir = Path(args.outdir); outdir.mkdir(parents=True, exist_ok=True)
 
     results_info = []
     for q in conf.get("queries", []):
         qname = q.get("name", "query")
-        qtype = q.get("type", "generic")
+        qtype = q.get("type", "generic").lower()
         region = q.get("region", "bcn")
         filters = q.get("filters", {}) or {}
         prefer_fast = bool(q.get("prefer_fast", False))
         ignore_rotation = bool(q.get("ignore_rotation", False))
         brand_only = bool(q.get("brand_only", False))
         top_n = int(q.get("top_n", 10))
-        selection = str(q.get("selection","mean")).lower()
+        selection = str(q.get("selection","cheapest")).lower()  # por defecto: "vehiculo óptimo"
         cluster = q.get("cluster", {}) or {}
         min_listings_per_group = int(q.get("min_listings_per_group", 1))
         prefer_cheapest_sort = bool(q.get("prefer_cheapest_sort", False))
 
-        # PATCH: consultas especiales paramétricas via YAML:
-        #   special:
-        #     model: <texto modelo>
-        #     year: <int>
-        special = q.get("special")
-        if special:
-            model = special.get("model")
-            year = special.get("year")
-            if model is None or year is None:
-                raise ValueError(f"La consulta especial '{qname}' necesita 'model' y 'year' en 'special'.")
-            res = rec.query_special(model, int(year))
-            safe = sanitize_filename(qname)
-            f1 = outdir / f"{safe} - by_country.csv"
-            f2 = outdir / f"{safe} - by_subasta.csv"
-            res["by_country"].to_csv(f1, index=False)
-            res["by_subasta"].to_csv(f2, index=False)
-            results_info.append((qname+" (by_country)", f1))
-            results_info.append((qname+" (by_subasta)", f2))
-            continue  # pasamos a la siguiente query
-        else:
-            # 2) Consultas normales (recomendaciones)
+        safe = sanitize_filename(qname)
 
-            # Filtro de transmisión por consulta (opcional)
-            trans = filters.get("transmission") or filters.get("gearbox")
-            base_df = rec.df
-            if trans:
-                base_df = filter_by_transmission(base_df, trans)
-
-            # Filtro de combustible por consulta (opcional)
-            fuel_inc = filters.get("fuel_include") or filters.get("combustible_include")
-            fuel_exc = filters.get("fuel_exclude") or filters.get("combustible_exclude")
-            base_df = filter_by_fuel(base_df, include=fuel_inc, exclude=fuel_exc)
-
-            # Ya con todos los filtros aplicados, creamos el recomendador local
-            rec_local = mod.BCAInvestRecommender(base_df, cfg=rcfg)
-
-            tmp = rec_local.recommend_best(
-                region=region,
-                max_age_years=filters.get("max_age_years"),
-                max_price=filters.get("max_price"),
-                min_price=filters.get("min_price"),
-                ignore_rotation=ignore_rotation,
-                prefer_fast=prefer_fast,
-                brand_only=brand_only,
-                # NUEVO: selección y filtros avanzados
-                selection=selection,  # "mean" | "cheapest"
-                year_exact=filters.get("year_exact"),
-                segment_include=filters.get("segment") or filters.get("segment_include"),
-                segment_exclude=filters.get("segment_exclude"),
-                mileage_min=filters.get("mileage_min"),
+        if qtype in {"best_auction_for_model","q1"}:
+            model = q.get("model") or q.get("modelo") or ""
+            top_listings, rank = rec.q1_best_auction_for_model(
+                model_query=model, region=region, top_n=top_n,
+                year_from=filters.get("year_from"), year_to=filters.get("year_to"),
                 mileage_max=filters.get("mileage_max") or filters.get("max_km"),
-                include_sale_country=bool(cluster.get("include_sale_country", True)),
-                include_sale_name=bool(cluster.get("include_sale_name", True)),
-                min_listings_per_group=min_listings_per_group,
-                prefer_cheapest_sort=prefer_cheapest_sort,
-                n=top_n
             )
-            safe = sanitize_filename(qname)
+            f1 = outdir / f"{safe}.csv"
+            ensure_output_cols(top_listings).to_csv(f1, index=False)
+            results_info.append((qname, f1))
+
+            f2 = outdir / f"{safe} - auction_ranking.csv"
+            rank.to_csv(f2, index=False)
+            results_info.append((qname + " (auction_ranking)", f2))
+            continue
+
+        if qtype in {"brand_price_order","q2"}:
+            brand = q.get("brand") or q.get("marca") or ""
+            res = rec.q2_price_order_within_brand(brand=brand, region=region)
             f = outdir / f"{safe}.csv"
-            tmp.to_csv(f, index=False)
+            ensure_output_cols(res).to_csv(f, index=False)
             results_info.append((qname, f))
+            continue
+
+        if qtype in {"segment_price_order","q3"}:
+            segment = q.get("segment") or q.get("segmento") or ""
+            res = rec.q3_price_order_within_segment(segment=segment, region=region, top_n=top_n)
+            f = outdir / f"{safe}.csv"
+            ensure_output_cols(res).to_csv(f, index=False)
+            results_info.append((qname, f))
+            continue
+
+        if qtype in {"best_market_for_model_year","q4"}:
+            model_base = q.get("modelo_base") or q.get("model_base") or q.get("modelo") or ""
+            year = int(q.get("year") or q.get("anio") or q.get("año") or 0)
+            res = rec.q4_best_market_for_model_year(modelo_base=model_base, anio=year)
+            f = outdir / f"{safe}.csv"
+            res.to_csv(f, index=False)
+            results_info.append((qname, f))
+            continue
+
+        if qtype in {"best_fuel_gap","q5"}:
+            model_base = q.get("modelo_base") or q.get("model_base") or q.get("modelo") or ""
+            year = int(q.get("year") or q.get("anio") or q.get("año") or 0)
+            res = rec.q5_best_fuel_gap(modelo_base=model_base, anio=year)
+            f = outdir / f"{safe}.csv"
+            res.to_csv(f, index=False)
+            results_info.append((qname, f))
+            continue
+
+        # --- consultas genéricas (compat con V1) ---
+        base_df = rec.df
+        trans = filters.get("transmission") or filters.get("gearbox")
+        if trans: base_df = filter_by_transmission(base_df, trans)
+        fuel_inc = filters.get("fuel_include") or filters.get("combustible_include")
+        fuel_exc = filters.get("fuel_exclude") or filters.get("combustible_exclude")
+        base_df = filter_by_fuel(base_df, include=fuel_inc, exclude=fuel_exc)
+
+        rec_local = mod.BCAInvestRecommender(base_df, cfg=rcfg)
+        tmp = rec_local.recommend_best(
+            region=region,
+            max_age_years=filters.get("max_age_years"),
+            max_price=filters.get("max_price"),
+            min_price=filters.get("min_price"),
+            ignore_rotation=ignore_rotation,
+            prefer_fast=prefer_fast,
+            brand_only=brand_only,
+            selection=selection,  # default "cheapest"
+            year_exact=filters.get("year_exact"),
+            segment_include=filters.get("segment") or filters.get("segment_include"),
+            segment_exclude=filters.get("segment_exclude"),
+            mileage_min=filters.get("mileage_min"),
+            mileage_max=filters.get("mileage_max") or filters.get("max_km"),
+            include_sale_country=bool(cluster.get("include_sale_country", True)),
+            include_sale_name=bool(cluster.get("include_sale_name", True)),
+            min_listings_per_group=min_listings_per_group,
+            prefer_cheapest_sort=prefer_cheapest_sort,
+            n=top_n
+        )
+        f = outdir / f"{safe}.csv"
+        ensure_output_cols(tmp).to_csv(f, index=False)
+        results_info.append((qname, f))
 
     idx = pd.DataFrame([{"query": n, "file": str(p)} for n,p in results_info])
     idx.to_csv(outdir / "queries_index.csv", index=False)
