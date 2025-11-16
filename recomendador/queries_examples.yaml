@@ -34,10 +34,18 @@ queries:
       mileage_max: 120000
 
   # ---------------- Q2 ----------------
-  - name: "Q2 - Orden de precio dentro de BMW (vehículo óptimo por modelo)"
-    type: q2
-    brand: "BMW"
-    region: esp
+ - name: "Q2 - Orden de precio dentro de BMW (vehículo óptimo por modelo)"
+   type: q2
+   brand: "BMW"
+   region: bcn
+
+   # cheapest = modelo más barato por modelo_base_x
+   # max_margin = modelo con mayor margin_abs por modelo_base_x
+   mode: cheapest
+
+   filters:
+     min_year: 2020      # por defecto 2020
+     max_km: 100000      # por defecto 100000
 
   # ---------------- Q3 ----------------
   - name: "Q3 - Orden de precio en segmento SUV compacto (Top 20)"
