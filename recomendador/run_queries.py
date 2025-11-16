@@ -6,11 +6,12 @@ from pathlib import Path
 import importlib.util
 
 OUTPUT_COLS = [
-    "link_ficha","make_clean","modelo_base","segmento","year","mileage","fuel_type",
+    "link_ficha","make_clean","modelo_base_x","segmento","year","mileage","fuel_type",
     "transmission-sale_country","auction_name","end_date","winning_bid",
     "precio_final_eur","precio_venta_ganvam","margin_abs","vat_type",
     "units_abs_bcn","units_abs_cat","units_abs_esp"
 ]
+
 
 def normalize_fuel(x: str) -> str:
     if x is None: return ""
@@ -119,10 +120,11 @@ def ensure_output_cols(df: pd.DataFrame) -> pd.DataFrame:
                 out["mileage"] = out[c]; break
     if "fuel_type" not in out.columns and "combustible_norm" in out.columns:
         out["fuel_type"] = out["combustible_norm"]
-    if "modelo_base" not in out.columns:
-        for c in ["modelo_base_x","modelo_base_y","modelo_base_match","modelo"]:
+    if "modelo_base_x" not in out.columns:
+        for c in ["modelo_base", "modelo_base_y", "modelo_base_match", "modelo"]:
             if c in out.columns:
-                out["modelo_base"] = out[c]; break
+                out["modelo_base_x"] = out[c]
+                break
     # transmission-sale_country
     if "transmission-sale_country" not in out.columns:
         t = out.get("transmission", "")
