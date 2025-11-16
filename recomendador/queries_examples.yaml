@@ -25,8 +25,8 @@ queries:
   # ---------------- Q1 ----------------
   - name: "Q1 - Mejor subasta para BMW X1 (Top 20)"
     type: q1
-    model: "BMW X1"
-    region: bcn
+    model: "X1"
+    region: esp
     top_n: 20
     filters:
       year_from: 2018
@@ -37,12 +37,12 @@ queries:
   - name: "Q2 - Orden de precio dentro de BMW (vehículo óptimo por modelo)"
     type: q2
     brand: "BMW"
-    region: bcn
+    region: esp
 
   # ---------------- Q3 ----------------
   - name: "Q3 - Orden de precio en segmento SUV compacto (Top 20)"
     type: q3
-    segment: "SUV"
+    segment: "JC"
     region: bcn
     top_n: 20
 
