@@ -355,13 +355,11 @@ class BCAInvestRecommender:
         Lógica:
         - Filtra el DataFrame por modelo (cadenas que contienen `model_query`).
         - Aplica filtros de año (por defecto [2018, 2024]) y kilometraje máximo.
-        - Calcula un score específico de Q1:
+        - Score Q1 basado SOLO en margin_abs:
 
-              score_q1 = 0.7 * margin_abs_norm + 0.3 * units_abs_esp_norm
+              score_q1 = margin_abs_normalizado
 
-          donde units_abs_esp_norm se calcula a nivel de fila (aunque normalmente
-          sea constante por modelo/año).
-
+          (la normalización no cambia el orden, es solo por comodidad numérica).
         - Cobertura de años: para cada año del intervalo, selecciona el mejor
           listado (mayor score_q1) de ese año. Si el número de años es menor
           que `top_n`, rellena el resto con los siguientes mejores listados por
@@ -372,28 +370,19 @@ class BCAInvestRecommender:
         """
         df = self.df.copy()
 
-        # 1) Filtro por modelo usando modelo_base_x como fuente principal
-        mask_model_parts = []
-
-        # fuente de verdad
-        if "modelo_base_x" in df.columns:
-            mask_model_parts.append(
-                df["modelo_base_x"].astype(str).str.contains(model_query, case=False, na=False)
-            )
-
-        # campos de apoyo (por si hay textos más ricos o inconsistencias)
-        for col in ["modelo", "model", "model_bca_raw", "modelo_detectado"]:
+        # 1) Filtro por modelo usando modelo_base_x/modelo/model...
+        mask_parts = []
+        for col in ["modelo_base_x", "modelo", "model", "model_bca_raw", "modelo_detectado"]:
             if col in df.columns:
-                mask_model_parts.append(
+                mask_parts.append(
                     df[col].astype(str).str.contains(model_query, case=False, na=False)
                 )
 
-        if mask_model_parts:
-            mask_model = mask_model_parts[0]
-            for m in mask_model_parts[1:]:
+        if mask_parts:
+            mask_model = mask_parts[0]
+            for m in mask_parts[1:]:
                 mask_model = mask_model | m
         else:
-            # caso extremo: no hay ninguna columna de modelo → no hay match
             mask_model = pd.Series(False, index=df.index)
 
         df = df[mask_model]
@@ -409,16 +398,16 @@ class BCAInvestRecommender:
 
         # 3) Filtro por kilometraje
         if mileage_max is not None:
-            km_col = next((c for c in ["mileage","km","kilometros","kilómetros","odometro","odómetro"] if c in df.columns), None)
+            km_col = next((c for c in ["mileage","km","kilometros","kilómetros","odometro","odómetro"]
+                           if c in df.columns), None)
             if km_col:
                 df = df[pd.to_numeric(df[km_col], errors="coerce") <= float(mileage_max)]
 
         if df.empty:
             return df.head(0), pd.DataFrame(columns=["sale_name","auction_score","representation_pct","price_adv_pct"])
 
-        # 4) Score Q1 basado en margen + unidades en España (transmisiones)
+        # 4) Score Q1 basado SOLO en margen absoluto (normalizado)
         margin = pd.to_numeric(df.get("margin_abs", 0.0), errors="coerce")
-        units_esp = pd.to_numeric(df.get("units_abs_esp", 0.0), errors="coerce")
 
         def _norm(s: pd.Series) -> pd.Series:
             s = pd.to_numeric(s, errors="coerce")
@@ -430,8 +419,7 @@ class BCAInvestRecommender:
             return (s - a) / (b - a)
 
         margin_n = _norm(margin)
-        units_n = _norm(units_esp)
-        df = df.assign(score_q1=0.7 * margin_n + 0.3 * units_n)
+        df = df.assign(score_q1=margin_n)
 
         # 5) Cobertura de años: 1 por año del intervalo primero, luego rellenar hasta top_n
         years = sorted(df.get("anio", pd.Series(dtype=float)).dropna().unique())
@@ -447,7 +435,7 @@ class BCAInvestRecommender:
             if len(selected_idx) >= top_n:
                 break
 
-        # Si aún no alcanzamos top_n, rellenar con mejores restantes
+        # Si aún no alcanzamos top_n, rellenar con mejores restantes (sea del año que sea)
         if len(selected_idx) < top_n:
             remaining = df.drop(index=selected_idx, errors="ignore")
             remaining_sorted = remaining.sort_values("score_q1", ascending=False)
@@ -455,7 +443,7 @@ class BCAInvestRecommender:
             selected_idx.extend(extra_idx)
 
         df_top = df.loc[selected_idx]
-        # Orden final por score_q1 descendente
+        # Orden final por score_q1 descendente (equivalente a ordenar por margin_abs)
         df_top = df_top.sort_values("score_q1", ascending=False)
 
         # 6) Preparar top_listings con formato estándar
@@ -476,11 +464,20 @@ class BCAInvestRecommender:
         enriched = top_listings.copy()
         if base_cols and "precio_final_eur" in self.df.columns:
             # merge por link_ficha + sale_name + winning_bid si es posible
-            keys = [c for c in ["link_ficha","sale_name","winning_bid"] if c in top_listings.columns and c in self.df.columns]
+            keys = [c for c in ["link_ficha","sale_name","winning_bid"]
+                    if c in top_listings.columns and c in self.df.columns]
             if keys:
-                enriched = top_listings.merge(self.df[base_cols + keys + ["precio_final_eur"]], on=keys, how="left")
+                enriched = top_listings.merge(
+                    self.df[base_cols + keys + ["precio_final_eur"]],
+                    on=keys,
+                    how="left",
+                )
             elif "link_ficha" in top_listings.columns and "link_ficha" in self.df.columns:
-                enriched = top_listings.merge(self.df[base_cols + ["link_ficha","precio_final_eur"]], on=["link_ficha"], how="left")
+                enriched = top_listings.merge(
+                    self.df[base_cols + ["link_ficha","precio_final_eur"]],
+                    on=["link_ficha"],
+                    how="left",
+                )
 
         if base_cols and "precio_final_eur" in enriched.columns:
             med = (
@@ -488,7 +485,9 @@ class BCAInvestRecommender:
                 .rename("precio_median_cluster").reset_index()
             )
             enriched = enriched.merge(med, on=base_cols, how="left")
-            enriched["price_adv_pct"] = 100.0 * (enriched["precio_median_cluster"] - enriched["precio_final_eur"]) / enriched["precio_median_cluster"]
+            enriched["price_adv_pct"] = 100.0 * (
+                enriched["precio_median_cluster"] - enriched["precio_final_eur"]
+            ) / enriched["precio_median_cluster"]
         else:
             enriched["price_adv_pct"] = 0.0
 
@@ -504,11 +503,16 @@ class BCAInvestRecommender:
 
         repn = _norm2(rep["representation_pct"]).rename("repn")
         advn = _norm2(adv["price_adv_pct"]).rename("advn")
-        rank = rep.assign(_repn=repn.values).merge(adv.assign(_advn=advn.values), on="sale_name")
+        rank = rep.assign(_repn=repn.values).merge(
+            adv.assign(_advn=advn.values), on="sale_name"
+        )
         rank["auction_score"] = 0.6 * rank["_repn"] + 0.4 * rank["_advn"]
-        rank = rank[["sale_name","auction_score","representation_pct","price_adv_pct"]].sort_values("auction_score", ascending=False)
+        rank = rank[
+            ["sale_name", "auction_score", "representation_pct", "price_adv_pct"]
+        ].sort_values("auction_score", ascending=False)
 
         return top_listings, rank
+
 
 
     def q2_price_order_within_brand(self, brand: str, region: str="bcn",
