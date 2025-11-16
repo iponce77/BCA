@@ -12,7 +12,7 @@ REGIONS = ["bcn","cat","esp"]
 OUTPUT_COLS = [
     "link_ficha",
     "make_clean",
-    "modelo_base",
+    "modelo_base_x",
     "segmento",
     "year",
     "mileage",
@@ -222,10 +222,10 @@ class BCAInvestRecommender:
             out["fuel_type"] = out["combustible_norm"]
 
         # modelo_base: coalesce varios candidatos
-        if "modelo_base" not in out.columns:
-            for c in ["modelo_base_x","modelo_base_y","modelo_base_match","modelo"]:
+        if "modelo_base_x" not in out.columns:
+            for c in ["modelo_base","modelo_base_y","modelo_base_match","modelo"]:
                 if c in out.columns:
-                    out["modelo_base"] = out[c]; break
+                    out["modelo_base_x"] = out[c]; break
 
         # transmission-sale_country combinado
         out["transmission-sale_country"] = out.apply(self._compose_transmission_country, axis=1)
@@ -310,7 +310,7 @@ class BCAInvestRecommender:
 
         df = df.assign(score=score)
 
-        group_keys = [c for c in ["marca","modelo","modelo_base","anio","combustible_norm"] if c in df.columns]
+        group_keys = [c for c in ["marca", "modelo_base_x", "modelo", "anio", "combustible_norm"] if c in df.columns]
         if include_sale_country and "sale_country" in df.columns: group_keys.append("sale_country")
         if include_sale_name and "sale_name" in df.columns:       group_keys.append("sale_name")
 
@@ -447,15 +447,26 @@ class BCAInvestRecommender:
     def q4_best_market_for_model_year(self, modelo_base: str, anio: int) -> pd.DataFrame:
         """¿Dónde se vende mejor este modelo/año? Score por región ponderando units/share/YoY/coef_var/HHI."""
         df = self.df.copy()
-        # filtrar por modelo_base y año
-        mask = (
-            (df.get("anio", np.nan) == int(anio)) &
-            (
-                df.get("modelo_base", "").astype(str).str.contains(modelo_base, case=False, na=False) |
-                df.get("modelo", "").astype(str).str.contains(modelo_base, case=False, na=False)
-            )
-        )
+
+        # --- Filtro robusto por modelo_base_x / modelo_base / modelo y año ---
+        model_masks = []
+        for col in ["modelo_base_x", "modelo_base", "modelo"]:
+            if col in df.columns:
+                model_masks.append(
+                    df[col].astype(str).str.contains(modelo_base, case=False, na=False)
+                )
+
+        if model_masks:
+            mask_model = model_masks[0]
+            for m in model_masks[1:]:
+                mask_model = mask_model | m
+        else:
+            # Si no tenemos ninguna columna de modelo, no hay match posible
+            mask_model = pd.Series(False, index=df.index)
+
+        mask = (df.get("anio", np.nan) == int(anio)) & mask_model
         sub = df[mask]
+
         rows = []
         for r in REGIONS:
             units = sub.get(f"units_abs_{r}", pd.Series(np.nan, index=sub.index))
@@ -463,62 +474,103 @@ class BCAInvestRecommender:
             yoy   = sub.get(f"YoY_%_{r}", pd.Series(np.nan, index=sub.index))
             cv    = sub.get(f"coef_var_%_{r}", pd.Series(np.nan, index=sub.index))
             hhi   = sub.get(f"HHI_marca_{r}", pd.Series(np.nan, index=sub.index))
+
             units_m = np.nanmean(pd.to_numeric(units, errors="coerce"))
-            share_m = np.nanmean(pd.to_numeric(share, errors="coerce")/ (100.0 if pd.to_numeric(share,errors="coerce").max(skipna=True) and pd.to_numeric(share,errors="coerce").max(skipna=True)>1.0 else 1.0))
+
+            share_num = pd.to_numeric(share, errors="coerce")
+            if share_num.max(skipna=True) is not None and share_num.max(skipna=True) > 1.0:
+                share_num = share_num / 100.0
+            share_m = np.nanmean(share_num)
+
             yoy_m   = np.nanmean(pd.to_numeric(yoy, errors="coerce"))
             cv_m    = np.nanmean(pd.to_numeric(cv, errors="coerce"))
             hhi_m   = np.nanmean(pd.to_numeric(hhi, errors="coerce"))
-            rows.append({"region": r, "units": units_m, "share": share_m, "yoy": yoy_m, "cv": cv_m, "hhi": hhi_m})
+
+            rows.append({
+                "region": r,
+                "units": units_m,
+                "share": share_m,
+                "yoy": yoy_m,
+                "cv": cv_m,
+                "hhi": hhi_m,
+            })
+
         md = pd.DataFrame(rows)
         if md.empty:
             return md
+
         # Scores: más unidades/mejor cuota/mayor crecimiento; penaliza volatilidad y concentración
         def _norm(s):
             s = pd.to_numeric(s, errors="coerce")
-            if s.notna().sum()==0: return s.fillna(0.0)
+            if s.notna().sum() == 0:
+                return s.fillna(0.0)
             a, b = s.min(), s.max()
-            return s.fillna(0.0) if a==b else (s-a)/(b-a)
+            return s.fillna(0.0) if a == b else (s - a) / (b - a)
+
         md["S_units"] = _norm(md["units"])
         md["S_share"] = _norm(md["share"])
         md["S_yoy"]   = _norm(md["yoy"])
         md["S_stab"]  = 1.0 - _norm(md["cv"])
         md["S_open"]  = 1.0 - _norm(md["hhi"])
+
         # ponderación (ajustable)
         w_units, w_share, w_yoy, w_stab, w_open = 0.30, 0.25, 0.25, 0.10, 0.10
-        md["market_score"] = (w_units*md["S_units"] + w_share*md["S_share"] + w_yoy*md["S_yoy"] +
-                              w_stab*md["S_stab"] + w_open*md["S_open"])
+        md["market_score"] = (
+            w_units * md["S_units"] +
+            w_share * md["S_share"] +
+            w_yoy   * md["S_yoy"] +
+            w_stab  * md["S_stab"] +
+            w_open  * md["S_open"]
+        )
+
         md = md.sort_values("market_score", ascending=False).reset_index(drop=True)
-        md["reco"] = np.where(md.index==0, "primario", "alternativo")
+        md["reco"] = np.where(md.index == 0, "primario", "alternativo")
         return md[["region","market_score","units","share","yoy","cv","hhi","reco"]]
+
 
     def q5_best_fuel_gap(self, modelo_base: str, anio: int) -> pd.DataFrame:
         """Mejor fuel por región y gap vs resto."""
         df = self.df.copy()
-        mask = (
-            (df.get("anio", np.nan) == int(anio)) &
-            (
-                df.get("modelo_base", "").astype(str).str.contains(modelo_base, case=False, na=False) |
-                df.get("modelo", "").astype(str).str.contains(modelo_base, case=False, na=False)
-            )
-        )
+
+        # --- Filtro robusto por modelo_base_x / modelo_base / modelo y año ---
+        model_masks = []
+        for col in ["modelo_base_x", "modelo_base", "modelo"]:
+            if col in df.columns:
+                model_masks.append(
+                    df[col].astype(str).str.contains(modelo_base, case=False, na=False)
+                )
+
+        if model_masks:
+            mask_model = model_masks[0]
+            for m in model_masks[1:]:
+                mask_model = mask_model | m
+        else:
+            mask_model = pd.Series(False, index=df.index)
+
+        mask = (df.get("anio", np.nan) == int(anio)) & mask_model
         sub = df[mask]
+
         out_rows = []
         for r in REGIONS:
             best_col = f"best_fuel_{r}"
-            isbest   = f"is_best_fuel_{r}"
             gap_col  = f"row_vs_best_fuel_%_{r}"
+
             best = sub.get(best_col)
             gap  = sub.get(gap_col)
+
             if best is None and gap is None:
                 continue
-            # mejor fuel: modo del campo best_fuel_{r} si existe; si no, el fuel_type más frecuente
+
+            # mejor fuel: modo de best_fuel_{r} si existe; si no, fuel_type más frecuente
             if best is not None and best.notna().any():
                 best_mode = best.dropna().astype(str).str.upper().mode()
                 best_val = best_mode.iloc[0] if not best_mode.empty else np.nan
             else:
-                best_val = sub.get("fuel_type", pd.Series(dtype=str)).astype(str).str.upper().mode()
-                best_val = best_val.iloc[0] if len(best_val)>0 else np.nan
-            # gap medio: 1 - media(row_vs_best...) (si viene como %, ajústalo a 0..1)
+                fuel_series = sub.get("fuel_type", pd.Series(dtype=str)).astype(str).str.upper()
+                best_mode = fuel_series.mode()
+                best_val = best_mode.iloc[0] if not best_mode.empty else np.nan
+
+            # gap medio: 1 - media(row_vs_best...), ajustando % si hace falta
             if gap is not None and gap.notna().any():
                 g = pd.to_numeric(gap, errors="coerce")
                 if g.max(skipna=True) and g.max(skipna=True) > 1.0:
@@ -526,8 +578,11 @@ class BCAInvestRecommender:
                 gap_mean = float(1.0 - np.nanmean(g))
             else:
                 gap_mean = np.nan
+
             out_rows.append({"region": r, "best_fuel": best_val, "gap_vs_rest_mean": gap_mean})
+
         return pd.DataFrame(out_rows)
+
 
 # ------------------------- Carga de dataset -------------------------
 def load_dataset(path: str | Path) -> pd.DataFrame:
