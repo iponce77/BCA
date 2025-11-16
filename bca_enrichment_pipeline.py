@@ -120,20 +120,70 @@ def _dense_rank_desc(series: pd.Series) -> pd.Series:
 # Mapeos canónicos
 # =========================
 FUEL_MAP_BCA2INE = {
-    # GASOLINA
-    "GASOLINA":"GASOLINA","PETROL":"GASOLINA","HYBRID":"GASOLINA",
-    "HEVPETROL":"GASOLINA","MHEVPETROL":"GASOLINA","PHEVPETROL":"GASOLINA",
-    # DIESEL
-    "DIESEL":"DIESEL","DIESEL.":"DIESEL","DIESEL/":"DIESEL","DIESEL-":"DIESEL",
-    # BEV
-    "ELECTRIC":"BEV","BEV":"BEV","ELECTRICO":"BEV","ELECTRICA":"BEV","EV":"BEV",
-    # OTROS
-    "CNG":"OTROS","LPG":"OTROS","BIFUEL":"OTROS","FLEXFUEL":"OTROS","HYDROGEN":"OTROS",
-    "UNKNOWN":"OTROS","": "OTROS", None:"OTROS"
+    # --- Eléctricos puros / BEV ---
+    "bev": "electric",
+    "electric": "electric",
+    "electrico": "electric",   # "eléctrico"
+    "electrica": "electric",   # "eléctrica"
+    "ev": "electric",
+
+    # --- Híbridos enchufables / PHEV ---
+    "phev": "phev",
+    "phevpetrol": "phev",
+    "diesel y electrico": "phev",      # Diesel y Eléctrico (todas las tildes/variantes)
+    "gasolina y electrico": "phev",    # Gasolina y Eléctrico
+    "dye": "phev",                     # DYE, DyE…
+    "gye": "phev",                     # GYE, GyE…
+
+    # --- Híbridos no enchufables / HEV (full/mild) ---
+    "hev": "hev",
+    "hevdiesel": "hev",
+    "hevpetrol": "hev",
+    "hybrid": "hev",
+    "hibrido": "hev",                  # "híbrido"
+    "hibrida": "hev",                  # "híbrida"
+    "mhevpetrol": "hev",
+
+    # --- Diésel puros ---
+    "diesel": "diesel",
+    "mhevdiesel": "diesel",
+
+    # --- Gasolina / Petrol ---
+    "petrol": "petrol",
+    "gasolina": "petrol",
+    "gasolina95": "petrol",
+    "gasolina98": "petrol",
+    "flexfuel": "petrol",
+
+    # --- Gas natural comprimido / CNG / GNC ---
+    "cng": "cng",
+    "cngpetrol": "cng",
+    "gnc": "cng",                       # G.N.C., GNC…
+    "m": "cng",                         # código raro m/M de BCA
+
+    # --- Gas licuado de petróleo / LPG / GLP ---
+    "lpg": "lpg",
+    "glp": "lpg",                       # G.L.P., GLP, glp…
+    "s": "lpg",                         # código raro s/S de BCA
+
+    # --- Hidrógeno ---
+    "hydrogen": "hydrogen",
+    "h2": "hydrogen",
+
+    # --- Desconocidos / Otros ---
+    "bifuel": "unknown",
+    "unknown": "unknown",
+    "": "unknown",
+    None: "unknown",
 }
 
 def map_fuel_bca_to_ine(df: pd.DataFrame, fuel_col: str) -> pd.Series:
-    return df[fuel_col].map(_normalize_str).map(lambda f: FUEL_MAP_BCA2INE.get(f, "OTROS"))
+    return (
+        df[fuel_col]
+        .map(_normalize_str)
+        .map(lambda f: FUEL_MAP_BCA2INE.get(f, "unknown"))
+    )
+)
 
 def _map_region(v):
     vv = _normalize_str(v)
