@@ -207,7 +207,23 @@ def main():
 
         if qtype in {"brand_price_order","q2"}:
             brand = q.get("brand") or q.get("marca") or ""
-            res = rec.q2_price_order_within_brand(brand=brand, region=region)
+            filters_q = q.get("filters", {}) or {}
+
+            # Parámetros estándar configurables
+            min_year = filters_q.get("min_year", 2020)
+            max_km = filters_q.get("max_km", 100000)
+
+            # Modo de selección por modelo: "cheapest" o "max_margin"
+            mode = q.get("mode", "cheapest")
+
+            res = rec.q2_price_order_within_brand(
+                brand=brand,
+                region=region,
+                min_year=min_year,
+                max_km=max_km,
+                mode=mode,
+            )
+
             f = outdir / f"{safe}.csv"
             ensure_output_cols(res).to_csv(f, index=False)
             results_info.append((qname, f))
