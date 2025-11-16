@@ -3,6 +3,7 @@
 import argparse, os, json, unicodedata, math, random, datetime as dt
 import pandas as pd
 import numpy as np
+import re
 
 # === Flexible IO helpers (added) ===
 def _read_any(path):
@@ -96,11 +97,12 @@ def _normalize_str(x: str) -> str:
         c for c in unicodedata.normalize('NFKD', x)
         if not unicodedata.combining(c)
     )
-    # quitar signos de puntuación, dejar solo letras/números/espacios
-    x = re.sub(r"[^\w\s]", " ", x)
+    # quitar signos de puntuación (puntos, comas, etc)
+    x = re.sub(r"[^\w\s]", "", x)
     # colapsar espacios
     x = " ".join(x.split())
     return x if x != "" else None
+
 
 def _safe_int(x):
     try: return int(x)
@@ -184,13 +186,18 @@ FUEL_MAP_BCA2INE = {
     None: "unknown",
 }
 
+def _map_fuel_scalar(f):
+    """Normaliza un valor de combustible y lo lleva a canonical_fuel."""
+    if pd.isna(f):
+        return "unknown"
+    f_norm = _normalize_str(f)   # -> p.ej. "GASOLINA", "DIESEL Y ELECTRICO"
+    if f_norm is None:
+        return "unknown"
+    return FUEL_MAP_BCA2INE.get(f_norm.lower(), "unknown")
+
 def map_fuel_bca_to_ine(df: pd.DataFrame, fuel_col: str) -> pd.Series:
-    return (
-        df[fuel_col]
-        .map(_normalize_str)
-        .map(lambda f: FUEL_MAP_BCA2INE.get(f, "unknown"))
-    )
-)
+    return df[fuel_col].map(_map_fuel_scalar)
+    
 
 def _map_region(v):
     vv = _normalize_str(v)
@@ -292,7 +299,7 @@ def normalize_ine(ine_df: pd.DataFrame, muni_df: pd.DataFrame) -> pd.DataFrame:
         "marca":        ine_df[marca].map(_normalize_str),
         "modelo":       ine_df[modelo].map(_normalize_str),
         "anio":         ine_df[anio].apply(_safe_int).astype("Int64"),
-        "combustible":  ine_df[fuel].map(_normalize_str).map(lambda f: FUEL_MAP_BCA2INE.get(f, "OTROS")),
+        "combustible": ine_df[fuel].map(_map_fuel_scalar),
         "unidades":     pd.to_numeric(ine_df[units], errors="coerce").fillna(0.0).astype(float),
         "codigo_ine":   ine_df[codine]
     })
@@ -536,11 +543,42 @@ def compute_shares_and_ranks(ine_norm: pd.DataFrame):
 # 4) Matching con fallbacks (corregido y estable)
 # =========================
 def _fuel_fallback_sequence(original: str):
-    # Orden lógico propuesto: GASOLINA → DIESEL → BEV → OTROS (evita repeticiones)
-    seq = ["GASOLINA", "DIESEL", "BEV", "OTROS"]
-    o = original if original in seq else None
-    # Ya se intentó el 'original' en el exacto; aquí devolvemos sólo alternativas
-    return [f for f in seq if f != o]
+    """
+    Devuelve la lista de combustibles a probar COMO ALTERNATIVAS al original
+    (en canonical fuel: petrol/diesel/electric/hev/phev/cng/lpg/unknown).
+
+    El orden final lo controla el bucle de _match_region, pero aquí limitamos
+    a qué alternativas tiene sentido caer según el combustible de origen.
+    """
+    if original is None or (isinstance(original, float) and pd.isna(original)):
+        orig = "unknown"
+    else:
+        orig = str(original).lower()
+
+    # Grupo gasolina / híbridos de gasolina
+    if orig in ("petrol", "hev", "phev"):
+        base = ["petrol", "diesel", "electric", "hev", "phev", "unknown"]
+
+    # Diesel (incluyendo mild-hybrid de diesel si llega con ese label)
+    elif orig == "diesel":
+        base = ["diesel", "petrol", "electric", "hev", "phev", "unknown"]
+
+    # Eléctricos puros
+    elif orig == "electric":
+        base = ["electric", "phev", "hev", "petrol", "diesel", "unknown"]
+
+    # Gases alternativos
+    elif orig in ("cng", "lpg"):
+        base = ["cng", "lpg", "petrol", "diesel", "unknown"]
+
+    # Unknown o cosas raras
+    else:
+        base = ["petrol", "diesel", "electric", "hev", "phev", "cng", "lpg", "unknown"]
+
+    # Quitamos el original si se coló en la lista de alternativas
+    return [f for f in base if f != orig]
+
+
 
 def _prepare_candidate_exact(bca_key, base_fuel, geo):
     left = bca_key.copy()
@@ -634,9 +672,11 @@ def _match_region(bca_key: pd.DataFrame, features_fuel, features_nofuel, best_fu
         # 2) FUEL FALLBACK LÓGICO
         # Para evitar intentar fuels duplicados, calculamos para cada fila la secuencia sin el combustible ya intentado.
         seq_map = {idx: _fuel_fallback_sequence(f) for idx, f in zip(base["_bca_idx"], base["combustible"])}
-        # Iteramos en orden GASOLINA → DIESEL → BEV → OTROS
-        for fallback_fuel in ["GASOLINA","DIESEL","BEV","OTROS"]:
-            # Filas donde este combustible está en su secuencia
+
+        # Iteramos en un orden global coherente con los combustibles canónicos actuales
+        # (petrol/diesel/electric/hev/phev/cng/lpg/unknown)
+        for fallback_fuel in ["petrol", "diesel", "electric", "hev", "phev", "cng", "lpg", "unknown"]:
+            # Filas donde este combustible está en SU secuencia de alternativas
             idxs = [i for i, seq in seq_map.items() if fallback_fuel in seq]
             if not idxs:
                 continue
@@ -644,6 +684,7 @@ def _match_region(bca_key: pd.DataFrame, features_fuel, features_nofuel, best_fu
             subset["combustible"] = fallback_fuel
             c_fb = _prepare_candidate_fuel(subset, features_fuel, geo, fallback_fuel)
             all_candidates.append(c_fb)
+
 
         # 3) BEST_FUEL (solo para los que aún no hayan matcheado en este geo)
         c_best = _prepare_candidate_bestfuel(base[["_bca_idx","marca","modelo","anio","combustible"]], features_fuel, best_fuel_base, geo)
