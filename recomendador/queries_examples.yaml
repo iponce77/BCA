@@ -1,26 +1,23 @@
 version: 1
 alpha: 0.6  # peso del margen en el score (0..1). La rotación pesa (1 - alpha).
 
-# Filtros globales (se aplican a TODAS las consultas). Si no quieres alguno, cambia los valores.
+# Filtros globales (se aplican a TODAS las consultas)
 global_filters:
-  margin_cap_ratio: 0.5          # margin_abs <= margin_cap_ratio * precio_final_eur
-  sold_only: true                # lot_status debe indicar vendidos (sold/sale ended/closed/vendido)
-  max_year_gap: 3                # |year_bca - anio_ganvam| <= 3
-  fuel_exclude: []               # excluye combustibles en todas las consultas
+  margin_cap_ratio: 0.5
+  sold_only: true
+  max_year_gap: 3
+  fuel_exclude: []
 
-# Sensores de demanda: "foto" del mercado (cuánto se mueve y qué marcas pesan)
+# Sensores de demanda
 demand:
-  use_brand_share: true          # usa share_marca_%_{region} (normalizado a 0..1)
-  use_units_abs: true            # usa units_abs_{region} (normalizado a 0..1)
-  use_concentration_penalty: false  # si true, penaliza alta dominancia de un solo modelo en la marca
-  weight_brand_share: 0.2        # pesos relativos entre señales (suman libre; internamente re-normalizamos)
+  use_brand_share: true
+  use_units_abs: true
+  use_concentration_penalty: false
+  weight_brand_share: 0.2
   weight_units_abs: 0.8
   weight_concentration: 0.0
 
-# Lista de consultas. Puedes duplicar/editar las que quieras.
-# IMPORTANTE: por defecto "vehículo barato" = selección "cheapest" (vehículo óptimo)
-# Todas las salidas de listados se conforman al orden/columns de negocio.
-
+# Lista de consultas
 queries:
   # ---------------- Q1 ----------------
   - name: "Q1 - Mejor subasta para BMW X1 (Top 20)"
@@ -29,23 +26,19 @@ queries:
     region: esp
     top_n: 20
     filters:
-      year_from: 2018
-      year_to: 2024
+      min_year: 2018        # <— tu runner entiende min/max_year
+      max_year: 2024
       mileage_max: 120000
 
   # ---------------- Q2 ----------------
- - name: "Q2 - Orden de precio dentro de BMW (vehículo óptimo por modelo)"
-   type: q2
-   brand: "BMW"
-   region: bcn
-
-   # cheapest = modelo más barato por modelo_base_x
-   # max_margin = modelo con mayor margin_abs por modelo_base_x
-   mode: cheapest
-
-   filters:
-     min_year: 2020      # por defecto 2020
-     max_km: 100000      # por defecto 100000
+  - name: "Q2 - Orden de precio dentro de BMW (vehículo óptimo por modelo)"
+    type: q2
+    brand: "BMW"
+    region: bcn
+    mode: cheapest          # cheapest = más barato por modelo_base_x; max_margin = mayor margen
+    filters:
+      min_year: 2020
+      max_km: 100000
 
   # ---------------- Q3 ----------------
   - name: "Q3 - Orden de precio en segmento SUV compacto (Top 20)"
@@ -53,6 +46,11 @@ queries:
     segment: "JC"
     region: bcn
     top_n: 20
+    filters:
+      min_year: 2020
+      max_year: 2025
+      max_km: 100000
+      # fuel: ["GASOLINA","DIESEL"]   # opcional
 
   # ---------------- Consulta genérica (legacy compatible) ----------------
   - name: "GEN - Top 15 baratos BCN (<=15k, <=6 años, automáticos)"
@@ -62,8 +60,5 @@ queries:
     filters:
       max_age_years: 6
       max_price: 15000
-      gearbox: automatic
-    selection: cheapest  # explícito pero ya es el default
-
-
-
+      # gearbox: automatic  # <— hoy no se parsea; si quieres lo soportamos en el runner
+    selection: cheapest
