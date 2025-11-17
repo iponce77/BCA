@@ -1,198 +1,368 @@
-from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any, Tuple, Union
+import argparse, sys, yaml
 from pathlib import Path
 import pandas as pd
-import numpy as np
+import importlib.util
+import re
 
-REGIONS = ["bcn","cat","esp"]
+# -------------------- Layout estándar --------------------
+OUTPUT_COLS = [
+    "link_ficha",
+    "make_clean",
+    "modelo_base_x",
+    "segmento",
+    "year_bca",
+    "mileage",
+    "fuel_type",
+    "transmission",
+    "sale_country",
+    "sale_name",
+    "winning_bid",
+    "precio_final_eur",
+    "precio_venta_ganvam",
+    "margin_abs",
+    "vat_type",
+    "units_abs_bcn",
+    "units_abs_cat",
+    "units_abs_esp",
+]
 
-@dataclass
-class DemandConfig:
-    use_brand_share: bool = True
-    use_units_abs: bool = True
-    use_concentration_penalty: bool = False
-    weight_brand_share: float = 0.5
-    weight_units_abs: float = 0.5
-    weight_concentration: float = 0.25
+# -------------------- Normalizaciones ligeras --------------------
+def normalize_fuel(x: str) -> str:
+    if pd.isna(x):
+        return ""
+    v = str(x).strip().lower()
+    if "bev" in v or "eléctr" in v or "electric" in v:
+        return "BEV"
+    if "diesel" in v or "diésel" in v:
+        return "DIESEL"
+    if ("gas" in v and "lina" in v) or v in {"gasolina","petrol"}:
+        return "GASOLINA"
+    if "híbr" in v or "hybrid" in v:
+        return "HÍBRIDO"
+    if "phev" in v:
+        return "PHEV"
+    if "gnc" in v or "cng" in v:
+        return "GNC"
+    if "gpl" in v or "lpg" in v:
+        return "GPL"
+    return v.upper()
 
-@dataclass
-class RecommenderConfig:
-    alpha_margin: float = 0.6
-    rotation_boost: float = 0.0
-    demand: DemandConfig = field(default_factory=DemandConfig)
 
-class BCAInvestRecommender:
-    def __init__(self, df: pd.DataFrame, cfg: Optional[RecommenderConfig] = None):
-        self.df = df.copy()
-        self.cfg = cfg or RecommenderConfig()
-        self._normalize_types()
-        self._check_columns_minimum()
-        self._build_price_means()
+def normalize_transmission(x: str) -> str:
+    if pd.isna(x):
+        return ""
+    v = str(x).strip().lower()
+    if "auto" in v:
+        return "automatic"
+    if "man" in v:
+        return "manual"
+    return v
 
-    # ------------------------- helpers -------------------------
-    def _pick_model_base_col(self) -> str:
-        for c in ["modelo_base_x","modelo_base","modelo_base_y","modelo_base_match","modelo"]:
-            if c in self.df.columns:
-                return c
-        return "modelo"
+# -------------------- ensure_output_cols --------------------
+def ensure_output_cols(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
 
-    def _normalize_types(self):
-        for c in ["anio"]:
-            if c in self.df.columns:
-                self.df[c] = pd.to_numeric(self.df[c], errors="coerce")
-        if "combustible_norm" in self.df.columns:
-            self.df["combustible_norm"] = self.df["combustible_norm"].astype(str).str.upper().str.strip()
-        for c in ["precio_final_eur", "precio_venta_ganvam", "margin_abs", "margin_ptc", "margin_pct"]:
-            if c in self.df.columns:
-                self.df[c] = pd.to_numeric(self.df[c], errors="coerce")
-        if "sale_name" in self.df.columns:
-            self.df["sale_name"] = self.df["sale_name"].astype(str).str.strip()
-        for c in ["km","kilometros","mileage","odometro","odómetro"]:
-            if c in self.df.columns:
-                self.df[c] = pd.to_numeric(self.df[c], errors="coerce")
-        for c in ["url","link","lote_url","listing_url","link_ficha"]:
-            if c in self.df.columns:
-                self.df[c] = self.df[c].astype(str).str.strip()
-        for c in ["lot_id","lote_id","listing_id","id_bca"]:
-            if c in self.df.columns:
-                self.df[c] = self.df[c].astype(str).str.strip()
+    # link_ficha
+    if "link_ficha" not in out.columns:
+        for c in ["listing_url","lote_url","url","link"]:
+            if c in out.columns:
+                out["link_ficha"] = out[c]
+                break
+    if "link_ficha" not in out.columns:
+        out["link_ficha"] = ""
 
-    def _check_columns_minimum(self):
-        required = [
-            "marca","modelo","anio",
-            "combustible_norm",
-            "precio_final_eur","precio_venta_ganvam",
-            "margin_abs",
-            "sale_country","sale_name",
-        ]
-        missing = [c for c in required if c not in self.df.columns]
-        if missing:
-            raise ValueError(f"Faltan columnas requeridas: {missing}")
+    # make_clean (marca)
+    if "make_clean" not in out.columns:
+        out["make_clean"] = out["marca"] if "marca" in out.columns else ""
 
-    def _build_price_means(self):
-        grp_keys = ["marca", self._pick_model_base_col(), "anio","combustible_norm","sale_country"]
-        self.price_mean_country = (
-            self.df.groupby(grp_keys, dropna=False)["precio_final_eur"].mean().rename("precio_medio_modelo_pais")
-        )
-        grp_keys2 = grp_keys + ["sale_name"]
-        self.price_mean_auction = (
-            self.df.groupby(grp_keys2, dropna=False)["precio_final_eur"].mean().rename("precio_medio_modelo_pais_subasta")
-        )
+    # modelo_base_x con fallbacks
+    if "modelo_base_x" not in out.columns:
+        for c in ["modelo_base","modelo_base_y","modelo_base_match","modelo"]:
+            if c in out.columns:
+                out["modelo_base_x"] = out[c]
+                break
+    if "modelo_base_x" not in out.columns:
+        out["modelo_base_x"] = ""
 
-    def _region_field(self, base: str, region: str) -> str:
-        if base.endswith("_%"):
-            return f"{base}_{region}"
-        elif base.endswith("_"):
-            return f"{base}{region}"
+    # segmento
+    if "segmento" not in out.columns:
+        for c in ["segmento","segment","segmento_norm"]:
+            if c in out.columns:
+                out["segmento"] = out[c]
+                break
+    if "segmento" not in out.columns:
+        out["segmento"] = ""
+
+    # year_bca
+    if "year_bca" not in out.columns:
+        for c in ["anio","Año","year","year_bca"]:
+            if c in out.columns:
+                out["year_bca"] = pd.to_numeric(out[c], errors="coerce")
+                break
+    if "year_bca" not in out.columns:
+        out["year_bca"] = pd.NA
+
+    # mileage
+    if "mileage" not in out.columns:
+        for c in ["mileage","km","kilometros","kilómetros","odometro","odómetro"]:
+            if c in out.columns:
+                out["mileage"] = pd.to_numeric(out[c], errors="coerce")
+                break
+    if "mileage" not in out.columns:
+        out["mileage"] = pd.NA
+
+    # fuel_type
+    if "fuel_type" not in out.columns:
+        if "combustible_norm" in out.columns:
+            out["fuel_type"] = out["combustible_norm"].map(normalize_fuel)
         else:
-            return f"{base}_{region}"
+            out["fuel_type"] = ""
 
-    def _normalize(self, s: pd.Series) -> pd.Series:
-        s = s.astype(float)
-        a = s.min()
-        b = s.max()
-        if pd.isna(a) or pd.isna(b) or a==b:
-            return s.fillna(0.0)
-        return (s - a) / (b - a)
-
-    def _demand_factor(self, region: str) -> pd.Series:
-        dc = self.cfg.demand
-        parts = []; weights = []
-        if dc.use_brand_share:
-            col = self._region_field("share_marca_%", region)
-            if col in self.df.columns:
-                s = self.df[col].astype(float)
-                if s.max() > 1.0: s = s / 100.0
-                parts.append(self._normalize(s)); weights.append(dc.weight_brand_share)
-        if dc.use_units_abs:
-            col = self._region_field("units_abs", region)
-            if col in self.df.columns:
-                parts.append(self._normalize(self.df[col].astype(float))); weights.append(dc.weight_units_abs)
-        if dc.use_concentration_penalty:
-            col = self._region_field("dominancia_modelo_marca_%", region)
-            if col in self.df.columns:
-                s = self.df[col].astype(float)
-                if s.max() > 1.0: s = s / 100.0
-                parts.append(1.0 - self._normalize(s)); weights.append(dc.weight_concentration)
-        if not parts:
-            return pd.Series(1.0, index=self.df.index)
-        w = np.array(weights, dtype=float); w = w / w.sum()
-        stack = np.vstack([p.fillna(0.0).to_numpy() for p in parts])
-        return pd.Series((w @ stack), index=self.df.index)
-
-    def _fast_rotation_proxy(self, region: str) -> pd.Series:
-        mix_col = self._region_field("mix_0_3_%", region)
-        rank_col = self._region_field("rank_year_model", region)
-        if mix_col in self.df.columns:
-            s = self.df[mix_col].astype(float)
-            if s.max() > 1.0: s = s / 100.0
-            return self._normalize(s)
-        elif rank_col in self.df.columns:
-            s = self.df[rank_col].astype(float)
-            return 1.0 - self._normalize(s)
-        else:
-            return pd.Series(1.0, index=self.df.index)
-
-    def _composite_score(self, region: str) -> pd.Series:
-        mar = self._normalize(self.df["margin_abs"].astype(float))
-        dem = self._demand_factor(region)
-        rot = self._fast_rotation_proxy(region)
-        alpha = float(self.cfg.alpha_margin)
-        rot_weight = (1.0 - alpha) + float(self.cfg.rotation_boost)
-        return (alpha * mar) + (rot_weight * dem * rot)
-
-    # ------------------------- Q3 específica -------------------------
-    def q3_segment_price_order(self,
-                               region: str,
-                               segment: str,
-                               n: int = 20,
-                               min_year: int = 2020,
-                               max_year: int = 2025,
-                               mileage_max: Optional[float] = 100000,
-                               fuel_include: Optional[Union[str, List[str]]] = None) -> pd.DataFrame:
-        """Dentro de un segmento: pick del más barato por cluster y ordenar por margen desc, Top-N."""
-        if region not in REGIONS:
-            raise ValueError(f"region no válida: {region}. Usa {REGIONS}")
-        df = self.df.copy()
-
-        seg_col = next((c for c in ["segmento","segment","segmento_norm"] if c in df.columns), None)
-        if not seg_col:
-            raise ValueError("No existe columna segmento/segment/segmento_norm en el dataset")
-
-        # Filtros base
-        df = df[df[seg_col].astype(str).str.upper() == str(segment).strip().upper()]
-        if "anio" in df.columns:
-            df = df[(df["anio"] >= int(min_year)) & (df["anio"] <= int(max_year))]
-        km_col = next((c for c in ["km","kilometros","kilómetros","mileage","odometro","odómetro"] if c in df.columns), None)
-        if mileage_max is not None and km_col:
-            df = df[pd.to_numeric(df[km_col], errors="coerce") <= float(mileage_max)]
-        if fuel_include is not None and "combustible_norm" in df.columns:
-            vals = {str(x).strip().upper() for x in (fuel_include if isinstance(fuel_include,(list,tuple,set)) else [fuel_include])}
-            df = df[df["combustible_norm"].astype(str).str.upper().isin(vals)]
-
-        # score informativo
-        score = self._composite_score(region)
-        df = df.copy(); df["score"] = score.loc[df.index].fillna(0.0)
-
-        # pick más barato por cluster (marca, modelo_base, año, combustible)
-        group_keys = ["marca", self._pick_model_base_col(), "anio", "combustible_norm"]
-        df_sorted = df.sort_values(["precio_final_eur", "margin_abs", "score"], ascending=[True, False, False])
-        cheapest_per_cluster = df_sorted.groupby(group_keys, dropna=False, as_index=False).first()
-
-        # Top-N por margen (desc) sin duplicar cluster (ya es único por group_keys)
-        topn = cheapest_per_cluster.sort_values(["margin_abs","score"], ascending=[False, False]).head(int(n))
-        return topn
-
-# ------------------------- loader -------------------------
-def load_dataset(path: str | Path) -> pd.DataFrame:
-    path = Path(path)
-    if path.suffix.lower() in [".xlsx",".xls"]:
-        return pd.read_excel(path)
-    elif path.suffix.lower() in [".csv",".txt"]:
-        return pd.read_csv(path)
-    elif path.suffix.lower() == ".parquet":
-        return pd.read_parquet(path)
+    # transmission (limpia)
+    if "transmission" in out.columns:
+        out["transmission"] = out["transmission"].map(normalize_transmission)
     else:
-        raise ValueError("Formato no soportado. Usa .parquet, .xlsx o .csv")
+        out["transmission"] = ""
 
+    # sale_country
+    if "sale_country" not in out.columns:
+        out["sale_country"] = ""
+
+    # sale_name y mapeo auction_name->sale_name
+    if "sale_name" not in out.columns:
+        if "auction_name" in out.columns:
+            out["sale_name"] = out["auction_name"]
+        else:
+            out["sale_name"] = ""
+
+    # winning_bid (fallback a precio_final_eur)
+    if "winning_bid" not in out.columns:
+        out["winning_bid"] = out["precio_final_eur"] if "precio_final_eur" in out.columns else pd.NA
+
+    # precios / margen
+    if "precio_final_eur" not in out.columns:
+        out["precio_final_eur"] = pd.NA
+    if "precio_venta_ganvam" not in out.columns:
+        out["precio_venta_ganvam"] = pd.NA
+    if "margin_abs" not in out.columns:
+        out["margin_abs"] = pd.NA
+
+    # vat_type
+    if "vat_type" not in out.columns:
+        for c in ["vat_type","vat"]:
+            if c in out.columns:
+                out["vat_type"] = out[c]
+                break
+    if "vat_type" not in out.columns:
+        out["vat_type"] = ""
+
+    # units_abs_*
+    for r in ("bcn","cat","esp"):
+        col = f"units_abs_{r}"
+        if col not in out.columns:
+            out[col] = out[col] if col in out.columns else pd.NA
+
+    # quitar columnas no deseadas si existen
+    if "end_date" in out.columns:
+        out = out.drop(columns=["end_date"])  
+
+    # devolver SOLO OUTPUT_COLS, en orden
+    for c in OUTPUT_COLS:
+        if c not in out.columns:
+            out[c] = pd.NA
+    return out[OUTPUT_COLS]
+
+# -------------------- util --------------------
+def sanitize_filename(name: str) -> str:
+    safe = re.sub(r"[\\/:*?\"<>|]+", "_", str(name)).strip()
+    return safe[:140] or "query"
+
+
+def load_module(path: Path):
+    spec = importlib.util.spec_from_file_location("bca_invest_recommender", str(path))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["bca_invest_recommender"] = mod
+    spec.loader.exec_module(mod)  # type: ignore
+    return mod
+
+# -------------------- Global filters helpers --------------------
+def apply_global_filters(df: pd.DataFrame, gf: dict) -> pd.DataFrame:
+    out = df.copy()
+    # margin_cap_ratio
+    mcr = gf.get("margin_cap_ratio")
+    if mcr is not None and "precio_final_eur" in out.columns and "margin_abs" in out.columns:
+        price = pd.to_numeric(out["precio_final_eur"], errors="coerce")
+        margin = pd.to_numeric(out["margin_abs"], errors="coerce")
+        out = out[margin <= float(mcr) * price]
+    # sold_only
+    if gf.get("sold_only"):
+        status_col = next((c for c in ["lot_status","status","estado"] if c in out.columns), None)
+        if status_col:
+            mask = out[status_col].astype(str).str.lower().str.contains(
+                r"sold|ended|closed|vendido|sale ended"
+            )
+            out = out[mask]
+    # max_year_gap (|year_bca - anio_ganvam| <= K)
+    myg = gf.get("max_year_gap")
+    if myg is not None and {"anio","anio_ganvam"}.issubset(out.columns):
+        out = out[(out["anio"] - pd.to_numeric(out["anio_ganvam"], errors="coerce")).abs() <= int(myg)]
+    # fuel_exclude
+    fe = gf.get("fuel_exclude") or []
+    if fe and "combustible_norm" in out.columns:
+        fe_set = {str(x).strip().upper() for x in (fe if isinstance(fe,(list,tuple,set)) else [fe])}
+        out = out[~out["combustible_norm"].astype(str).str.upper().isin(fe_set)]
+    return out
+
+# -------------------- runner --------------------
+def run_from_yaml(dataset_path: Path, yaml_path: Path, outdir: Path):
+    mod = load_module(Path(__file__).parent / "bca_invest_recommender.py")
+
+    # cargar dataset con helper del módulo si existe
+    if hasattr(mod, "load_dataset"):
+        df = mod.load_dataset(str(dataset_path))
+    else:
+        # fallback sencillo
+        if dataset_path.suffix.lower() in {".xlsx",".xls"}:
+            df = pd.read_excel(dataset_path)
+        elif dataset_path.suffix.lower() in {".csv",".txt"}:
+            df = pd.read_csv(dataset_path)
+        elif dataset_path.suffix.lower() == ".parquet":
+            df = pd.read_parquet(dataset_path)
+        else:
+            raise ValueError("Formato no soportado. Usa .parquet, .xlsx o .csv")
+
+    conf = yaml.safe_load(Path(yaml_path).read_text(encoding="utf-8"))
+
+    # aplicar global filters si existen
+    gf = conf.get("global_filters", {}) or {}
+    if gf:
+        df = apply_global_filters(df, gf)
+
+    # inicializar recomendador con alpha / demand del YAML si aparecen
+    alpha = float(conf.get("alpha", 0.6))
+    dem = conf.get("demand", {}) or {}
+    demand_cfg = mod.DemandConfig(
+        use_brand_share=bool(dem.get("use_brand_share", True)),
+        use_units_abs=bool(dem.get("use_units_abs", True)),
+        use_concentration_penalty=bool(dem.get("use_concentration_penalty", False)),
+        weight_brand_share=float(dem.get("weight_brand_share", 0.5)),
+        weight_units_abs=float(dem.get("weight_units_abs", 0.5)),
+        weight_concentration=float(dem.get("weight_concentration", 0.25)),
+    )
+    cfg = mod.RecommenderConfig(alpha_margin=alpha, demand=demand_cfg)
+
+    rec = mod.BCAInvestRecommender(df, cfg)
+
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    results_info = []
+    for q in conf.get("queries", []):
+        qname   = q.get("name", "query")
+        qtype   = str(q.get("type", "generic")).lower()
+        region  = q.get("region", "bcn")
+        filters = q.get("filters", {}) or {}
+        prefer_fast   = bool(q.get("prefer_fast", False))
+        ignore_rot    = bool(q.get("ignore_rotation", False))
+        brand_only    = bool(q.get("brand_only", False))
+        top_n         = int(q.get("top_n", 10))
+        selection     = str(q.get("selection", "mean")).lower()  # "cheapest"|"mean"
+        min_group     = int(q.get("min_listings_per_group", 1))
+        prefer_cheapest_sort = bool(q.get("prefer_cheapest_sort", False))
+
+        # ----- Tipos especiales (comparativas por modelo/año) -----
+        special = q.get("special")
+        if special:
+            model = special.get("model"); year = special.get("year")
+            if model is None or year is None:
+                raise ValueError(f"La consulta especial '{qname}' necesita 'model' y 'year'.")
+            res = rec.query_special(model, int(year))
+            safe = sanitize_filename(qname)
+            f1 = outdir / f"{safe} - by_country.csv"
+            f2 = outdir / f"{safe} - by_subasta.csv"
+            ensure_output_cols(res["by_country"]).to_csv(f1, index=False)
+            ensure_output_cols(res["by_subasta"]).to_csv(f2, index=False)
+            results_info.append((qname+" (by_country)", f1))
+            results_info.append((qname+" (by_subasta)", f2))
+            continue
+
+        # ----- Q3: orden de precio por segmento (cheapest por cluster -> Top-N por margen) -----
+        if qtype in {"q3","segment_price_order"}:
+            segment = q.get("segment") or q.get("segmento")
+            if not segment:
+                raise ValueError(f"La consulta '{qname}' necesita 'segment' (por ejemplo: 'B' o 'SUV COMPACTO')")
+            min_year = int(filters.get("min_year", 2020))
+            max_year = int(filters.get("max_year", 2025))
+            max_km   = filters.get("max_km", 100000)
+            fuel     = filters.get("fuel")  # string o lista opcional
+
+            tmp = rec.q3_segment_price_order(
+                region=region,
+                segment=segment,
+                n=top_n,
+                min_year=min_year,
+                max_year=max_year,
+                mileage_max=max_km,
+                fuel_include=fuel,
+            )
+
+            tmp = ensure_output_cols(tmp)
+            safe = sanitize_filename(qname)
+            f = outdir / f"{safe}.csv"
+            tmp.to_csv(f, index=False)
+            results_info.append((qname, f))
+            continue
+
+        # ----- Q1/Q2/GENÉRICAS: recommend_best -----
+        year_exact = filters.get("year_exact")
+        min_year   = filters.get("min_year")
+        max_year   = filters.get("max_year")
+        max_km     = filters.get("max_km") or filters.get("mileage_max")
+
+        # filtros previos directos (para acelerar)
+        if min_year is not None and "anio" in rec.df.columns:
+            rec.df = rec.df[rec.df["anio"] >= int(min_year)].copy()
+        if max_year is not None and "anio" in rec.df.columns:
+            rec.df = rec.df[rec.df["anio"] <= int(max_year)].copy()
+        if max_km is not None:
+            km_col = next((c for c in ["km","kilometros","kilómetros","mileage","odometro","odómetro"] if c in rec.df.columns), None)
+            if km_col:
+                rec.df = rec.df[pd.to_numeric(rec.df[km_col], errors="coerce") <= float(max_km)].copy()
+
+        tmp = rec.recommend_best(
+            region=region,
+            ignore_rotation=ignore_rot,
+            prefer_fast=prefer_fast,
+            brand_only=brand_only,
+            selection=selection,
+            year_exact=year_exact,
+            min_year=min_year,
+            max_year=max_year,
+            mileage_max=max_km,
+            min_listings_per_group=min_group,
+            prefer_cheapest_sort=prefer_cheapest_sort,
+            n=top_n,
+        )
+
+        # Siempre formatear al layout estándar
+        tmp = ensure_output_cols(tmp)
+        safe = sanitize_filename(qname)
+        f = outdir / f"{safe}.csv"
+        tmp.to_csv(f, index=False)
+        results_info.append((qname, f))
+
+    # Índice de salidas
+    idx = pd.DataFrame([{"query": n, "file": str(p)} for n,p in results_info])
+    idx.to_csv(outdir / "queries_index.csv", index=False)
+    print(idx.to_string(index=False))
+
+# -------------------- CLI --------------------
+def main():
+    ap = argparse.ArgumentParser(description="Runner de consultas BCA (Q1/Q2/Q3 + layout estándar)")
+    ap.add_argument("--dataset", required=True, type=Path, help="Ruta del dataset (.parquet/.xlsx/.csv)")
+    ap.add_argument("--yaml", required=True, type=Path, help="YAML con la lista de queries")
+    ap.add_argument("--outdir", required=True, type=Path, help="Directorio de salida")
+    args = ap.parse_args()
+    run_from_yaml(args.dataset, args.yaml, args.outdir)
+
+if __name__ == "__main__":
+    main()
