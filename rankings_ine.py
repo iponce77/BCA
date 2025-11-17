@@ -1,320 +1,450 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Q4 – ¿Dónde se vende mejor este modelo/año?
-
-Ranking de mercados (INE / provincia / CCAA) para un *cluster* concreto
-(marca + modelo_base_x|modelo + combustible opcional) y un periodo dado.
-
-Métrica principal: unidades totales en el periodo por mercado.
-Métricas de apoyo: share del mercado, YoY, coef_var_pct (estabilidad mensual) y HHI de marcas.
-
-Diseñado para ser plug-and-play y flexible en nombres de columnas.
-"""
 from __future__ import annotations
-import argparse
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional, List, Tuple, Dict
 
-import numpy as np
+import argparse
+import json
+import os
+import sys
+from dataclasses import dataclass, asdict
+from datetime import datetime
+from typing import List, Optional, Tuple
+
 import pandas as pd
 
-# --------------------------- Defaults de columnas ---------------------------
-DEFAULTS = {
-    "col_ine": "codigo_ine",           # código INE del municipio (int/str)
-    "col_yyyymm": "yyyymm",            # AAAAMM (int/str)
-    "col_brand": "marca",              # marca normalizada
-    "col_model": "modelo_base_x",      # modelo canónico (fallback a modelo)
-    "col_fuel": "combustible_norm",    # combustible normalizado (opcional)
-    "col_units": "unidades",           # nº transmisiones/matriculaciones
+@dataclass
+class Filters:
+    ine: List[int]
+    anio: Optional[int]
+    start: Optional[int]
+    end: Optional[int]
+    marca: Optional[str]
+    modelo: Optional[str]
+    combustible: Optional[str]
+    by_combustible: bool
+    top: int
+
+try:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+except Exception:
+    pa = None
+    pq = None
+
+# ------------------------ Constantes de columnas ------------------------
+COL_MARCA = "marca_normalizada"
+COL_MODELO = "modelo_normalizado"
+COL_COMBUSTIBLE = "combustible"
+COL_INE = "codigo_ine"
+COL_ANIO = "anio"
+COL_YYYYMM = "yyyymm"
+COL_UNIDADES = "unidades"
+
+USECOLS = [COL_MARCA, COL_MODELO, COL_COMBUSTIBLE, COL_INE, COL_ANIO, COL_YYYYMM, COL_UNIDADES]
+
+# ------------------------ Alias combustibles ----------------------------
+FUEL_ALIASES = {
+    "ELECTRICO": "BEV", "ELÉCTRICO": "BEV", "EV": "BEV", "BEV": "BEV",
+    "HIBRIDO": "HEV", "HÍBRIDO": "HEV", "HEV": "HEV",
+    "HÍBRIDO ENCHUFABLE": "PHEV", "HIBRIDO ENCHUFABLE": "PHEV", "PHEV": "PHEV",
+    "MHEV": "MHEV",
+    "GLP": "GLP", "GNC": "GNC",
+    "GASOLINA": "ICE", "DIESEL": "ICE", "DIÉSEL": "ICE", "GASÓLEO": "ICE",
+    "HIDROGENO": "FCEV", "HIDRÓGENO": "FCEV", "FCEV": "FCEV",
 }
 
-# --------------------------- Utilidades ------------------------------------
+def fuel_alias(x: str) -> str:
+    if not isinstance(x, str):
+        return "OTROS"
+    key = x.strip().upper()
+    return FUEL_ALIASES.get(key, key if key in {"BEV","HEV","PHEV","MHEV","GLP","GNC","ICE","FCEV"} else "OTROS")
 
-def _to_int(s: pd.Series) -> pd.Series:
-    return pd.to_numeric(s, errors="coerce").astype("Int64")
+# ------------------------ Utilidades municipios -------------------------
+def _load_municipios(path: str) -> pd.DataFrame:
+    df = pd.read_csv(path, dtype={"codigo_ine":"Int64"})
+    for c in ["municipio","provincia","ccaa"]:
+        if c in df.columns:
+            df[c+"_norm"] = df[c].astype(str).str.normalize("NFKD").str.encode("ascii","ignore").str.decode("ascii").str.upper().str.strip()
+        else:
+            df[c+"_norm"] = ""
+    return df
 
-def _clean_str(s: pd.Series) -> pd.Series:
-    return s.astype(str).str.normalize("NFKD").str.encode("ascii", "ignore").str.decode("ascii").str.upper().str.strip()
+def _resolve_ine(args, municipios_path: str) -> List[int]:
+    if args.ine:
+        return [int(args.ine)]
+    df = _load_municipios(municipios_path)
+    q = (args.mun or "").strip()
+    if not q:
+        raise SystemExit("Debe indicar --ine o --mun.")
+    qn = (pd.Series([q]).str.normalize("NFKD").str.encode("ascii","ignore").str.decode("ascii").str.upper().str.strip()).iloc[0]
+    cur = df
+    if args.provincia:
+        pn = (pd.Series([args.provincia]).str.normalize("NFKD").str.encode("ascii","ignore").str.decode("ascii").str.upper().str.strip()).iloc[0]
+        cur = cur[cur["provincia_norm"]==pn]
+    if args.ccaa:
+        cn = (pd.Series([args.ccaa]).str.normalize("NFKD").str.encode("ascii","ignore").str.decode("ascii").str.upper().str.strip()).iloc[0]
+        cur = cur[cur["ccaa_norm"]==cn]
+    candidates = cur[cur["municipio_norm"]==qn]
+    if len(candidates)==0:
+        candidates = cur[cur["municipio_norm"].str.startswith(qn)]
+    if len(candidates)==0:
+        candidates = cur[cur["municipio_norm"].str.contains(qn, na=False)]
+    if len(candidates)==0:
+        raise SystemExit(f"No se encontró municipio '{q}'. Pruebe con --provincia o --ccaa.")
+    if args.on_ambig=="fail" and len(candidates)>1:
+        tops = candidates.head(10)[["municipio","provincia","codigo_ine"]].to_dict(orient="records")
+        raise SystemExit(f"Múltiples municipios coinciden: {tops}. Use --provincia o --ccaa, o cambie --on-ambig.")
+    if args.on_ambig=="first":
+        return [int(candidates.iloc[0]["codigo_ine"])]
+    return [int(x) for x in candidates["codigo_ine"].tolist()]
 
-@dataclass
-class Period:
-    yyyymm_start: int
-    yyyymm_end: int
+def _period_from_args(args) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+    # Siempre trabajamos en AÑOS
+    if args.anio:
+        return int(args.anio), None, None
 
-    @property
-    def length_months(self) -> int:
-        ys, ms = divmod(self.yyyymm_start, 100)
-        ye, me = divmod(self.yyyymm_end, 100)
-        return (ye - ys) * 12 + (me - ms) + 1
+    if args.start and args.end:
+        s, e = int(args.start), int(args.end)
+        # Si llegan como yyyymm (>= 100000), conviértelos a años con // 100
+        if s >= 100000: s //= 100
+        if e >= 100000: e //= 100
+        return None, s, e
 
-    def previous(self) -> "Period":
-        # periodo previo contiguo de igual longitud
-        length = self.length_months
-        y, m = divmod(self.yyyymm_start, 100)
-        # end of previous period = month before start
-        py, pm = y, m - 1
-        if pm == 0:
-            py -= 1; pm = 12
-        pend = py * 100 + pm
-        # start = pend - (length-1) months
-        sy, sm = py, pm
-        for _ in range(length - 1):
-            sm -= 1
-            if sm == 0:
-                sy -= 1; sm = 12
-        pstart = sy * 100 + sm
-        return Period(pstart, pend)
+    raise SystemExit("Debe indicar --anio o bien --start y --end (YYYY).")
 
-# --------------------------- Carga y mapeos --------------------------------
 
-def load_any(path: Path) -> pd.DataFrame:
-    if path.suffix.lower() in {".parquet"}:
-        return pd.read_parquet(path)
-    if path.suffix.lower() in {".xlsx", ".xls"}:
-        return pd.read_excel(path)
-    return pd.read_csv(path)
+def _previous_period(anio: Optional[int], start: Optional[int], end: Optional[int]) -> Tuple[Optional[int], Optional[int], Optional[int]]:
+    # Siempre en años
+    if anio is not None:
+        return anio - 1, None, None
+    # rango previo con misma longitud en años
+    length = int(end) - int(start) + 1
+    prev_end = int(start) - 1
+    prev_start = prev_end - (length - 1)
+    return None, prev_start, prev_end
 
-def attach_geo(df: pd.DataFrame, municipios_path: Optional[Path], col_ine: str) -> pd.DataFrame:
-    if municipios_path is None:
+
+# ------------------------ Carga CSV / Parquet ---------------------------
+def _apply_filters(df: pd.DataFrame, f: Filters) -> pd.DataFrame:
+    if df.empty:
         return df
-    if not municipios_path.exists():
-        return df
-    mun = load_any(municipios_path)
-    # Intentamos columnas estándar
-    # Se esperan campos: codigo_ine, municipio, provincia, ccaa
-    candidates = {
-        "codigo_ine": ["codigo_ine", "ine", "cod_ine", "codmun"],
-        "municipio": ["municipio", "mun", "localidad"],
-        "provincia": ["provincia", "prov"],
-        "ccaa": ["ccaa", "ca", "comunidad_autonoma"],
-    }
-    def pick(col: str) -> Optional[str]:
-        for c in candidates[col]:
-            if c in mun.columns:
-                return c
-        return None
-    key = pick("codigo_ine")
-    if not key:
-        return df
-    keep = {
-        "codigo_ine": key,
-        "municipio": pick("municipio"),
-        "provincia": pick("provincia"),
-        "ccaa": pick("ccaa"),
-    }
-    mun = mun[[v for v in keep.values() if v is not None]].copy()
-    mun = mun.rename(columns={keep["codigo_ine"]: "codigo_ine",
-                              keep.get("municipio", "municipio"): "municipio",
-                              keep.get("provincia", "provincia"): "provincia",
-                              keep.get("ccaa", "ccaa"): "ccaa"})
-    # normaliza tipos
-    mun["codigo_ine"] = _to_int(mun["codigo_ine"])  # para merge robusto
+    if COL_ANIO not in df.columns:
+        raise SystemExit("⛔ El dataset no contiene la columna 'anio', necesaria para el filtrado de periodo.")
 
-    out = df.copy()
-    out["__ine_int"] = _to_int(out[col_ine])
-    out = out.merge(mun, left_on="__ine_int", right_on="codigo_ine", how="left")
-    out = out.drop(columns=["__ine_int"])  # limpiar
+    cur = df[df[COL_INE].isin(f.ine)]
+
+    # --- PERIODO: siempre por 'anio' ---
+    if f.anio is not None:
+        cur = cur[cur[COL_ANIO] == f.anio]
+    else:
+        # start/end son AÑOS (YYYY) exclusivamente
+        sy, ey = int(f.start), int(f.end)
+        cur = cur[(cur[COL_ANIO] >= sy) & (cur[COL_ANIO] <= ey)]
+
+    # --- OTROS FILTROS ---
+    if f.marca:
+        cur = cur[cur[COL_MARCA].astype(str).str.upper() == f.marca.upper()]
+    if f.modelo:
+        cur = cur[cur[COL_MODELO].astype(str).str.upper() == f.modelo.upper()]
+    if f.combustible:
+        cur = cur[cur[COL_COMBUSTIBLE].astype(str).str.upper() == f.combustible.upper()]
+
+    for c in [COL_MARCA, COL_MODELO, COL_COMBUSTIBLE]:
+        if c in cur.columns:
+            cur[c] = cur[c].astype("category")
+    return cur
+
+
+def _iter_csv(csv_path: str, f: Filters, chunksize: Optional[int]) -> pd.DataFrame:
+    if chunksize:
+        it = pd.read_csv(csv_path, chunksize=chunksize, usecols=USECOLS,
+                         dtype={COL_INE:"Int64", COL_ANIO:"Int64", COL_YYYYMM:"Int64"})
+        parts = []
+        for chunk in it:
+            parts.append(_apply_filters(chunk, f))
+        return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=USECOLS)
+    else:
+        df = pd.read_csv(csv_path, usecols=USECOLS,
+                         dtype={COL_INE:"Int64", COL_ANIO:"Int64", COL_YYYYMM:"Int64"})
+        return _apply_filters(df, f)
+
+def _iter_parquet(pq_path: str, f: Filters) -> pd.DataFrame:
+    if pq is None:
+        raise SystemExit("pyarrow no está instalado; instálalo para leer Parquet (pip install pyarrow).")
+    pf = pq.ParquetFile(pq_path)
+    cols = [c for c in USECOLS if c in pf.schema.names]
+    parts = []
+
+    def _rg_has(col, pred, rg):
+        try:
+            cidx = pf.schema.get_field_index(col)
+            stats = rg.column(cidx).statistics
+            if stats is None:
+                return True
+            mn, mx = stats.min, stats.max
+            return pred(mn, mx)
+        except Exception:
+            return True
+
+    for i in range(pf.num_row_groups):
+        rg = pf.metadata.row_group(i)
+        # filtros gruesos por row-group (best-effort)
+        passes_period = True
+        if COL_ANIO in pf.schema.names:
+            if f.anio is not None:
+                passes_period = _rg_has(COL_ANIO, lambda mn, mx: (mx >= f.anio and mn <= f.anio), rg)
+            elif f.start is not None and f.end is not None:
+                s, e = int(f.start), int(f.end)  # años
+                passes_period = _rg_has(COL_ANIO, lambda mn, mx: (mx >= s and mn <= e), rg)
+
+
+        passes_ine = True
+        if COL_INE in pf.schema.names:
+            ine_min, ine_max = min(f.ine), max(f.ine)
+            passes_ine = _rg_has(COL_INE, lambda mn, mx: (mx >= ine_min and mn <= ine_max), rg)
+
+        if not (passes_period and passes_ine):
+            continue
+
+        # ← IMPORTANTE: sin types_mapper; conversión estándar y luego coerción manual
+        table = pf.read_row_group(i, columns=cols)
+        df = table.to_pandas(use_threads=True)
+
+        # Coerción segura a Int64 nullable (evita errores de tipos mixtos)
+        for c in (COL_INE, COL_ANIO, COL_YYYYMM, COL_UNIDADES):
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce").astype("Int64")
+
+        parts.append(_apply_filters(df, f))
+
+    if not parts:
+        return pd.DataFrame(columns=cols)
+    out = pd.concat(parts, ignore_index=True)
+
+    # Asegura categorías después de concatenar (por si se perdieron)
+    for c in [COL_MARCA, COL_MODELO, COL_COMBUSTIBLE]:
+        if c in out.columns:
+            out[c] = out[c].astype("category")
     return out
 
-# --------------------------- Core Q4 ---------------------------------------
 
-def rank_markets(df: pd.DataFrame,
-                 period: Period,
-                 geo_level: str,
-                 cols: Dict[str, str],
-                 compute_yoy: bool = True,
-                 municipios_path: Optional[Path] = None) -> pd.DataFrame:
-    """Devuelve ranking de mercados para el periodo."""
-    col_ine = cols["col_ine"]; col_ym = cols["col_yyyymm"]; col_units = cols["col_units"]; col_brand = cols["col_brand"]
-    # Attach geo labels
-    df = attach_geo(df, municipios_path, col_ine)
-
-    # Filtro periodo actual
-    df = df[(pd.to_numeric(df[col_ym], errors="coerce") >= period.yyyymm_start) &
-            (pd.to_numeric(df[col_ym], errors="coerce") <= period.yyyymm_end)]
-
-    # Determina columna geo
-    geo_level = geo_level.lower()
-    if geo_level == "ine":
-        geo_col = col_ine
-    elif geo_level == "provincia":
-        geo_col = "provincia"
-    elif geo_level == "ccaa":
-        geo_col = "ccaa"
+def _iter_filtered(path: str, f: Filters, chunksize: Optional[int]) -> pd.DataFrame:
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".parquet":
+        return _iter_parquet(path, f)
+    elif ext in (".csv", ".gz", ".bz2", ".xz"):
+        return _iter_csv(path, f, chunksize)
     else:
-        raise ValueError("geo debe ser ine|provincia|ccaa")
+        raise SystemExit(f"Formato no soportado para --data: {path}")
 
-    # Agregado de unidades por mercado
-    g = (df.groupby(geo_col, observed=True)[col_units]
-            .sum()
-            .reset_index()
-            .rename(columns={geo_col: "geo", col_units: "unidades"}))
-    g = g.sort_values("unidades", ascending=False)
-    total = g["unidades"].sum()
-    g["share_pct"] = (g["unidades"] / total * 100.0) if total else 0.0
-
-    # CV mensual por mercado
-    ts = (df.groupby([geo_col, col_ym], observed=True)[col_units]
-            .sum().reset_index().rename(columns={geo_col: "geo"}))
-    cv = (ts.groupby("geo")[col_units].agg(["mean", "std"]).reset_index())
-    cv["coef_var_pct"] = (cv["std"] / cv["mean"] * 100.0).replace([np.inf, -np.inf], np.nan)
-    g = g.merge(cv[["geo", "coef_var_pct"]], on="geo", how="left")
-
-    # HHI de marcas por mercado
-    parts = []
-    for geo, chunk in df.groupby(geo_col, observed=True):
-        r = chunk.groupby(col_brand)[col_units].sum().reset_index()
-        s = r[col_units].sum()
-        if s <= 0:
-            hhi = np.nan
-        else:
-            r["share"] = r[col_units] / s
-            hhi = float((r["share"] ** 2).sum() * 10000)  # 0..10000
-        parts.append({"geo": geo, "hhi_marca": hhi})
-    g = g.merge(pd.DataFrame(parts), on="geo", how="left")
-
-    # YoY (periodo previo contiguo
-    if compute_yoy:
-        prev = period.previous()
-        df_prev = df[(pd.to_numeric(df[col_ym], errors="coerce") >= prev.yyyymm_start) &
-                     (pd.to_numeric(df[col_ym], errors="coerce") <= prev.yyyymm_end)]
-        prev_g = (df_prev.groupby(geo_col, observed=True)[col_units]
-                        .sum().reset_index().rename(columns={geo_col: "geo", col_units: "unidades_prev"}))
-        g = g.merge(prev_g, on="geo", how="left")
-        g["unidades_prev"] = g["unidades_prev"].fillna(0).astype(int)
-        g["yoy_unidades"] = g["unidades"] - g["unidades_prev"]
-        g["yoy_pct"] = np.where(g["unidades_prev"] > 0, g["yoy_unidades"] / g["unidades_prev"] * 100.0, np.nan)
-    else:
-        g["yoy_unidades"] = np.nan
-        g["yoy_pct"] = np.nan
-
-    # Orden recomendado (primario): unidades desc, yoy_pct desc, coef_var asc, hhi asc
-    g = g.sort_values(["unidades", "yoy_pct", "coef_var_pct", "hhi_marca"], ascending=[False, False, True, True])
+# ------------------------ Ranking / Mix / HHI / TS ----------------------
+def _ranking(df: pd.DataFrame, f: Filters) -> pd.DataFrame:
+    if df.empty:
+        return df
+    keys = [COL_MARCA, COL_MODELO] + ([COL_COMBUSTIBLE] if f.by_combustible else [])
+    g = df.groupby(keys, observed=True, sort=False, dropna=False)[COL_UNIDADES].sum().reset_index()
+    g = g.sort_values(COL_UNIDADES, ascending=False)
+    g["share"] = (g[COL_UNIDADES] / g[COL_UNIDADES].sum()) * 100.0
+    g["share_top"] = g["share"].cumsum()
+    g["rank"] = range(1, len(g)+1)
+    if f.top:
+        g = g.head(f.top)
     return g
 
-# --------------------------- Filtros de cluster ----------------------------
+def _hhi_from_ranking(r: pd.DataFrame) -> float:
+    if r.empty:
+        return 0.0
+    s = (r["share"]/100.0) ** 2
+    return float((s.sum()) * 10000)
 
-def filter_cluster(df: pd.DataFrame,
-                   marca: Optional[str],
-                   modelo: Optional[str],
-                   combustible: Optional[str | List[str]],
-                   cols: Dict[str, str]) -> pd.DataFrame:
-    col_brand = cols["col_brand"]; col_model = cols["col_model"]; col_fuel = cols["col_fuel"]
-    out = df.copy()
-    if marca:
-        out[col_brand] = _clean_str(out[col_brand])
-        marca = _clean_str(pd.Series([marca]))[0]
-        out = out[out[col_brand].str.contains(marca, na=False)]
-    if modelo:
-        # usa modelo_base_x si existe; si no, cae a "modelo"
-        if col_model not in out.columns and "modelo" in out.columns:
-            col_model = "modelo"
-        out[col_model] = _clean_str(out[col_model])
-        modelo = _clean_str(pd.Series([modelo]))[0]
-        out = out[out[col_model].str.contains(modelo, na=False)]
-    if combustible is not None and col_fuel in out.columns:
-        if isinstance(combustible, str):
-            combustible = [combustible]
-        fuels = {_clean_str(pd.Series([f])).iloc[0] for f in combustible}
-        out[col_fuel] = _clean_str(out[col_fuel])
-        out = out[out[col_fuel].isin(fuels)]
-    return out
+def _mix_combustible(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    base = df.copy()
+    base["comb_alias"] = base[COL_COMBUSTIBLE].map(fuel_alias)
+    g = base.groupby("comb_alias", observed=True)[COL_UNIDADES].sum().reset_index()
+    g = g.sort_values(COL_UNIDADES, ascending=False)
+    total = g[COL_UNIDADES].sum()
+    g["share"] = (g[COL_UNIDADES] / total) * 100.0 if total else 0.0
+    return g
 
-# --------------------------- CLI ------------------------------------------
+def _timeseries(df: pd.DataFrame, f: Filters) -> pd.DataFrame:
+    if df.empty or COL_YYYYMM not in df.columns:
+        return pd.DataFrame()
+    keys = [COL_YYYYMM, COL_MARCA, COL_MODELO]
+    if f.by_combustible:
+        keys.append(COL_COMBUSTIBLE)
+    g = df.groupby(keys, observed=True)[COL_UNIDADES].sum().reset_index()
+    return g.sort_values([COL_MARCA, COL_MODELO, COL_YYYYMM])
 
-def parse_period(args: argparse.Namespace) -> Period:
-    if args.anio is not None:
-        y = int(args.anio)
-        return Period(y * 100 + 1, y * 100 + 12)
-    if args.start is not None and args.end is not None:
-        return Period(int(args.start), int(args.end))
-    raise ValueError("Debes indicar --anio o --start y --end (AAAAMM)")
+def _load_for_period(data_path: str, f: Filters, anio: Optional[int], start: Optional[int], end: Optional[int], chunksize: Optional[int]) -> pd.DataFrame:
+    f2 = Filters(ine=f.ine, anio=anio, start=start, end=end,
+                 marca=f.marca, modelo=f.modelo, combustible=f.combustible,
+                 by_combustible=f.by_combustible, top=0)
+    return _iter_filtered(data_path, f2, chunksize)
 
+def _ranking_vs_prev(data_path: str, f: Filters, chunksize: Optional[int], do_vs_prev: bool) -> Tuple[pd.DataFrame, Optional[dict]]:
+    cur_df = _iter_filtered(data_path, f, chunksize)
+    r = _ranking(cur_df, f)
+    meta = None
+    if do_vs_prev:
+        anio2, s2, e2 = _previous_period(f.anio, f.start, f.end)
+        prev_df = _load_for_period(data_path, f, anio2, s2, e2, chunksize)
+        r_prev = _ranking(prev_df, f)
+        keys = [COL_MARCA, COL_MODELO] + ([COL_COMBUSTIBLE] if f.by_combustible else [])
+        merged = r.merge(r_prev[keys+[COL_UNIDADES, "share"]], on=keys, how="left", suffixes=("", "_prev"))
+        merged["unidades_prev"] = merged[COL_UNIDADES+"_prev"].fillna(0).astype(int)
+        merged["delta_unidades"] = merged[COL_UNIDADES] - merged["unidades_prev"]
+        merged["delta_pct"] = merged.apply(lambda row: (row["delta_unidades"]/row["unidades_prev"]*100.0) if row["unidades_prev"]>0 else None, axis=1)
+        merged.drop(columns=[COL_UNIDADES+"_prev","share_prev"], inplace=True, errors="ignore")
+        r = merged
+        meta = {"prev_period": {"anio": anio2, "start": s2, "end": e2},
+                "prev_total_unidades": int(prev_df[COL_UNIDADES].sum()) if not prev_df.empty else 0}
+    return r, meta, cur_df
+
+# ------------------------ IO / CLI --------------------------------------
+def _print_df(df: pd.DataFrame, fmt: str) -> None:
+    if df is None or df.empty:
+        print("(sin filas)")
+        return
+    if fmt=="table":
+        with pd.option_context('display.max_rows', 200, 'display.max_columns', None, 'display.width', 120):
+            print(df.to_string(index=False))
+    else:
+        print(df.to_csv(index=False))
+
+def _save_with_meta(df: pd.DataFrame, out_path: str, meta: dict, dry: bool):
+    base = os.path.splitext(out_path)[0]
+    csv_path = f"{base}.csv"
+    json_path = f"{base}.json"
+    if not dry:
+        df.to_csv(csv_path, index=False)
+        with open(json_path,"w",encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+    return csv_path, json_path
 
 def main():
-    ap = argparse.ArgumentParser(description="Q4 – Ranking de mercados para un cluster marca+modelo(+combustible)")
-    ap.add_argument("--data", required=True, type=Path, help="Fichero INE (parquet/csv/xlsx) con columnas de unidades por yyyymm y mercado")
-    ap.add_argument("--municipios", type=Path, default=None, help="CSV/Parquet de municipios para mapear codigo_ine→municipio/provincia/ccaa")
-
-    # cluster
-    ap.add_argument("--marca", required=True, help="Marca a filtrar (match contiene, case-insensitive)")
-    ap.add_argument("--modelo", required=True, help="Modelo a filtrar (match contiene, case-insensitive)")
-    ap.add_argument("--combustible", nargs="*", default=None, help="Combustible opcional (uno o varios)")
-
+    p = argparse.ArgumentParser(description="Ranking por municipio (INE) y periodo (CSV/Parquet).")
+    # municipio
+    p.add_argument("--ine", type=int, help="Código INE")
+    p.add_argument("--mun", type=str, help="Nombre del municipio")
+    p.add_argument("--provincia", type=str)
+    p.add_argument("--ccaa", type=str)
+    p.add_argument("--on-ambig", choices=["fail","first","all"], default="first")
     # periodo
-    ap.add_argument("--anio", type=int, default=None, help="Año completo (ej. 2022)")
-    ap.add_argument("--start", type=int, default=None, help="Inicio AAAAMM")
-    ap.add_argument("--end", type=int, default=None, help="Fin AAAAMM")
-    ap.add_argument("--yoy", action="store_true", help="Calcular YoY vs periodo previo contiguo")
+    p.add_argument("--anio", type=int)
+    p.add_argument("--start", type=int)
+    p.add_argument("--end", type=int)
+    # filtros
+    p.add_argument("--marca", type=str)
+    p.add_argument("--modelo", type=str)
+    p.add_argument("--combustible", type=str)
+    p.add_argument("--by-combustible", action="store_true")
+    p.add_argument("--top", type=int, default=20)
+    # IO
+    p.add_argument("--data", type=str, default="agg_transmisiones_ine.parquet", help="Ruta a Parquet o CSV")
+    p.add_argument("--municipios-csv", type=str, default=os.environ.get("MUNICIPIOS_INE_CSV","data/municipios_ine.csv"))
+    p.add_argument("--out-prefix", type=str, default="")
+    p.add_argument("--show", action="store_true")
+    p.add_argument("--format", choices=["table","csv"], default="table")
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--chunksize", type=int, help="Sólo para CSV")
+    p.add_argument("--vs-prev", action="store_true")
+    p.add_argument("--mix-combustible", action="store_true")
+    p.add_argument("--timeseries", action="store_true")
 
-    # geo
-    ap.add_argument("--geo", choices=["ine", "provincia", "ccaa"], default="provincia")
-    ap.add_argument("--top", type=int, default=20, help="Top-N de mercados")
+    args = p.parse_args()
 
-    # nombres de columnas (por si difieren)
-    ap.add_argument("--col-ine", default=DEFAULTS["col_ine"]) 
-    ap.add_argument("--col-yyyymm", default=DEFAULTS["col_yyyymm"]) 
-    ap.add_argument("--col-brand", default=DEFAULTS["col_brand"]) 
-    ap.add_argument("--col-model", default=DEFAULTS["col_model"]) 
-    ap.add_argument("--col-fuel", default=DEFAULTS["col_fuel"]) 
-    ap.add_argument("--col-units", default=DEFAULTS["col_units"]) 
+    ines = _resolve_ine(args, args.municipios_csv)
+    anio, start, end = _period_from_args(args)
 
-    ap.add_argument("--out", type=Path, default=None, help="Ruta CSV de salida (si no, se genera nombre automático)")
+    filters = Filters(
+        ine=ines, anio=anio, start=start, end=end,
+        marca=args.marca, modelo=args.modelo, combustible=args.combustible,
+        by_combustible=args.by_combustible, top=args.top
+    )
 
-    args = ap.parse_args()
+    # Carga datos con el reader correcto por extensión
+    df = _iter_filtered(args.data, filters, args.chunksize)
 
-    # Carga
-    df = load_any(args.data)
-
-    # Renombrado flexible si hace falta
-    cols = {
-        "col_ine": args.col_ine,
-        "col_yyyymm": args.col_yyyymm,
-        "col_brand": args.col_brand,
-        "col_model": args.col_model,
-        "col_fuel": args.col_fuel,
-        "col_units": args.col_units,
-    }
-    for need in cols.values():
-        if need not in df.columns:
-            # intento de fallback de modelo
-            if need == args.col_model and "modelo" in df.columns:
-                cols["col_model"] = "modelo"
-            else:
-                raise SystemExit(f"Falta la columna requerida: {need}")
-
-    # Filtro cluster
-    df = filter_cluster(df, args.marca, args.modelo, args.combustible, cols)
+    # Retrocesos si no hay filas
+    relax_steps = []
     if df.empty:
-        raise SystemExit("No hay filas para ese cluster (marca/modelo/combustible)")
+        relax_steps.append("combustible")
+        tmp_f = Filters(**{**asdict(filters), "combustible": None})
+        df = _iter_filtered(args.data, tmp_f, args.chunksize)
+        if df.empty and filters.modelo:
+            relax_steps.append("modelo")
+            tmp_f = Filters(**{**asdict(tmp_f), "modelo": None})
+            df = _iter_filtered(args.data, tmp_f, args.chunksize)
+        if df.empty and filters.marca:
+            relax_steps.append("marca")
+            tmp_f = Filters(**{**asdict(tmp_f), "marca": None})
+            df = _iter_filtered(args.data, tmp_f, args.chunksize)
+        filters = tmp_f
 
-    # Periodo
-    period = parse_period(args)
+    # Timeseries (opcional)
+    ts_df = _timeseries(df, filters) if args.timeseries else pd.DataFrame()
 
-    # Ranking
-    g = rank_markets(df, period, args.geo, cols, compute_yoy=args.yoy, municipios_path=args.municipios)
+    # Ranking (+ vs-prev)
+    ranking, vs_meta, df_used = _ranking_vs_prev(args.data, filters, args.chunksize, args.vs_prev)
 
-    # Orden final + Top
-    g = g.head(args.top)
+    # Métricas
+    hhi = _hhi_from_ranking(ranking)
+    total_unidades = int(df_used[COL_UNIDADES].sum()) if not df_used.empty else 0
 
-    # Si el geo es INE y tenemos nombres, añadimos nombres para legibilidad
-    if args.geo == "ine" and {"municipio", "provincia", "ccaa"}.issubset(set(g.columns)):
-        # ya vienen de attach_geo si municipios no es None
-        pass
+    # Mix
+    mix_df = _mix_combustible(df_used) if args.mix_combustible else pd.DataFrame()
 
-    # Salida
-    if args.out is None:
-        tag = f"{args.marca}_{args.modelo}_{args.geo}_{period.yyyymm_start}-{period.yyyymm_end}"
-        fname = f"q4_markets_{tag}.csv"
-        args.out = Path(fname)
-    g.to_csv(args.out, index=False)
-    print(args.out)
+    # nombres salida
+    period_str = str(anio) if anio is not None else f"{start}-{end}"
+    ine_str = "x".join(str(i) for i in ines)
+    prefix = args.out_prefix or ""
+    rank_out = f"{prefix}ranking_{ine_str}_{period_str}"
+    mix_out = f"{prefix}mix_combustible_{ine_str}_{period_str}"
+    ts_out = f"{prefix}timeseries_{ine_str}_{period_str}"
 
-if __name__ == "__main__":
-    main()
+    # metadatos
+    metadata = {
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "ine": ines,
+        "period": {"anio": anio, "start": start, "end": end},
+        "filters": {
+            "marca": filters.marca, "modelo": filters.modelo, "combustible": filters.combustible,
+            "by_combustible": filters.by_combustible, "top": filters.top
+        },
+        "relaxations": relax_steps,
+        "total_unidades": total_unidades,
+        "hhi_top": hhi
+    }
+    if vs_meta:
+        metadata["vs_prev"] = vs_meta
 
+    # outputs
+    outputs = []
+    if not ranking.empty:
+        csv_path, json_path = _save_with_meta(ranking, rank_out, metadata, args.dry_run)
+        outputs += [csv_path, json_path]
+        if args.show:
+            _print_df(ranking, args.format)
+    else:
+        print("No hay datos para el filtro/periodo (tras retrocesos: %s)." % "→".join(relax_steps or ["ninguno"]), file=sys.stderr)
+
+    if args.mix_combustible and not mix_df.empty:
+        _, _ = _save_with_meta(mix_df, mix_out, metadata, args.dry_run)
+        outputs.append(mix_out + ".csv")
+
+    if args.timeseries and not ts_df.empty:
+        _, _ = _save_with_meta(ts_df, ts_out, metadata, args.dry_run)
+        outputs.append(ts_out + ".csv")
+
+    # resumen
+    print(json.dumps({
+        "outputs": outputs,
+        "summary": {
+            "ine": ines, "period": period_str, "rows": int(len(ranking)),
+            "total_unidades": total_unidades, "hhi_top": hhi,
+            "relaxations": relax_steps
         }
     }, ensure_ascii=False))
 
