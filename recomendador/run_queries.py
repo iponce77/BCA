@@ -231,7 +231,22 @@ def main():
 
         if qtype in {"segment_price_order","q3"}:
             segment = q.get("segment") or q.get("segmento") or ""
-            res = rec.q3_price_order_within_segment(segment=segment, region=region, top_n=top_n)
+
+            # lee filtros opcionales con alias habituales
+            min_year = filters.get("min_year", filters.get("year_from", 2020))
+            max_year = filters.get("max_year", filters.get("year_to",   2025))
+            km_max   = filters.get("max_km",  filters.get("mileage_max", 100000))
+            fuel     = filters.get("fuel",    filters.get("fuel_include"))
+
+            res = rec.q3_price_order_within_segment(
+                segment=segment,
+                region=region,
+                top_n=top_n,
+                year_from=min_year,
+                year_to=max_year,
+                km_max=km_max,
+                fuel_include=fuel,
+            )
             f = outdir / f"{safe}.csv"
             ensure_output_cols(res).to_csv(f, index=False)
             results_info.append((qname, f))
