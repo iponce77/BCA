@@ -13,8 +13,8 @@ demand:
   use_brand_share: true          # usa share_marca_%_{region} (normalizado a 0..1)
   use_units_abs: true            # usa units_abs_{region} (normalizado a 0..1)
   use_concentration_penalty: false  # si true, penaliza alta dominancia de un solo modelo en la marca
-  weight_brand_share: 0.5        # pesos relativos entre señales (suman libre; internamente re-normalizamos)
-  weight_units_abs: 0.5
+  weight_brand_share: 0.2        # pesos relativos entre señales (suman libre; internamente re-normalizamos)
+  weight_units_abs: 0.8
   weight_concentration: 0.0
 
 # Lista de consultas. Puedes duplicar/editar las que quieras.
@@ -53,18 +53,6 @@ queries:
     segment: "JC"
     region: bcn
     top_n: 20
-
-  # ---------------- Q4 ----------------
-  - name: "Q4 - Dónde se vende mejor: SEAT León 2022"
-    type: q4
-    modelo_base: "LEON"
-    year: 2022
-
-  # ---------------- Q5 ----------------
-  - name: "Q5 - Mejor fuel y gap por región: SEAT León 2022"
-    type: q5
-    modelo_base: "LEON"
-    year: 2022
 
   # ---------------- Consulta genérica (legacy compatible) ----------------
   - name: "GEN - Top 15 baratos BCN (<=15k, <=6 años, automáticos)"
