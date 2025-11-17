@@ -28,7 +28,7 @@ OUTPUT_COLS = [
 
 # -------------------- Normalizaciones ligeras --------------------
 def normalize_fuel(x: str) -> str:
-    if x is None:
+    if pd.isna(x):
         return ""
     v = str(x).strip().lower()
     if "bev" in v or "eléctr" in v or "electric" in v:
@@ -49,7 +49,7 @@ def normalize_fuel(x: str) -> str:
 
 
 def normalize_transmission(x: str) -> str:
-    if x is None:
+    if pd.isna(x):
         return ""
     v = str(x).strip().lower()
     if "auto" in v:
@@ -185,6 +185,34 @@ def load_module(path: Path):
     spec.loader.exec_module(mod)  # type: ignore
     return mod
 
+# -------------------- Global filters helpers --------------------
+def apply_global_filters(df: pd.DataFrame, gf: dict) -> pd.DataFrame:
+    out = df.copy()
+    # margin_cap_ratio
+    mcr = gf.get("margin_cap_ratio")
+    if mcr is not None and "precio_final_eur" in out.columns and "margin_abs" in out.columns:
+        price = pd.to_numeric(out["precio_final_eur"], errors="coerce")
+        margin = pd.to_numeric(out["margin_abs"], errors="coerce")
+        out = out[margin <= float(mcr) * price]
+    # sold_only
+    if gf.get("sold_only"):
+        status_col = next((c for c in ["lot_status","status","estado"] if c in out.columns), None)
+        if status_col:
+            mask = out[status_col].astype(str).str.lower().str.contains(
+                r"sold|ended|closed|vendido|sale ended"
+            )
+            out = out[mask]
+    # max_year_gap (|year_bca - anio_ganvam| <= K)
+    myg = gf.get("max_year_gap")
+    if myg is not None and {"anio","anio_ganvam"}.issubset(out.columns):
+        out = out[(out["anio"] - pd.to_numeric(out["anio_ganvam"], errors="coerce")).abs() <= int(myg)]
+    # fuel_exclude
+    fe = gf.get("fuel_exclude") or []
+    if fe and "combustible_norm" in out.columns:
+        fe_set = {str(x).strip().upper() for x in (fe if isinstance(fe,(list,tuple,set)) else [fe])}
+        out = out[~out["combustible_norm"].astype(str).str.upper().isin(fe_set)]
+    return out
+
 # -------------------- runner --------------------
 def run_from_yaml(dataset_path: Path, yaml_path: Path, outdir: Path):
     mod = load_module(Path(__file__).parent / "bca_invest_recommender.py")
@@ -203,10 +231,28 @@ def run_from_yaml(dataset_path: Path, yaml_path: Path, outdir: Path):
         else:
             raise ValueError("Formato no soportado. Usa .parquet, .xlsx o .csv")
 
-    # inicializar recomendador
-    rec = mod.BCAInvestRecommender(df)
-
     conf = yaml.safe_load(Path(yaml_path).read_text(encoding="utf-8"))
+
+    # aplicar global filters si existen
+    gf = conf.get("global_filters", {}) or {}
+    if gf:
+        df = apply_global_filters(df, gf)
+
+    # inicializar recomendador con alpha / demand del YAML si aparecen
+    alpha = float(conf.get("alpha", 0.6))
+    dem = conf.get("demand", {}) or {}
+    demand_cfg = mod.DemandConfig(
+        use_brand_share=bool(dem.get("use_brand_share", True)),
+        use_units_abs=bool(dem.get("use_units_abs", True)),
+        use_concentration_penalty=bool(dem.get("use_concentration_penalty", False)),
+        weight_brand_share=float(dem.get("weight_brand_share", 0.5)),
+        weight_units_abs=float(dem.get("weight_units_abs", 0.5)),
+        weight_concentration=float(dem.get("weight_concentration", 0.25)),
+    )
+    cfg = mod.RecommenderConfig(alpha_margin=alpha, demand=demand_cfg)
+
+    rec = mod.BCAInvestRecommender(df, cfg)
+
     outdir.mkdir(parents=True, exist_ok=True)
 
     results_info = []
@@ -223,7 +269,23 @@ def run_from_yaml(dataset_path: Path, yaml_path: Path, outdir: Path):
         min_group     = int(q.get("min_listings_per_group", 1))
         prefer_cheapest_sort = bool(q.get("prefer_cheapest_sort", False))
 
-        # ---- Q3: orden de precio dentro de un segmento (cheapest por cluster -> Top-N por margen) ----
+        # ----- Tipos especiales (comparativas por modelo/año) -----
+        special = q.get("special")
+        if special:
+            model = special.get("model"); year = special.get("year")
+            if model is None or year is None:
+                raise ValueError(f"La consulta especial '{qname}' necesita 'model' y 'year'.")
+            res = rec.query_special(model, int(year))
+            safe = sanitize_filename(qname)
+            f1 = outdir / f"{safe} - by_country.csv"
+            f2 = outdir / f"{safe} - by_subasta.csv"
+            ensure_output_cols(res["by_country"]).to_csv(f1, index=False)
+            ensure_output_cols(res["by_subasta"]).to_csv(f2, index=False)
+            results_info.append((qname+" (by_country)", f1))
+            results_info.append((qname+" (by_subasta)", f2))
+            continue
+
+        # ----- Q3: orden de precio por segmento (cheapest por cluster -> Top-N por margen) -----
         if qtype in {"q3","segment_price_order"}:
             segment = q.get("segment") or q.get("segmento")
             if not segment:
@@ -232,34 +294,16 @@ def run_from_yaml(dataset_path: Path, yaml_path: Path, outdir: Path):
             max_year = int(filters.get("max_year", 2025))
             max_km   = filters.get("max_km", 100000)
             fuel     = filters.get("fuel")  # string o lista opcional
-            top_n    = int(q.get("top_n", 20))
 
-            # Implementación directa aquí (no dependemos del motor)
-            df = rec.df.copy()
-            # columna de segmento disponible
-            seg_col = next((c for c in ["segmento","segment","segmento_norm"] if c in df.columns), None)
-            if not seg_col:
-                raise ValueError("No existe columna de segmento en el dataset (segmento/segment/segmento_norm)")
-            df = df[df[seg_col].astype(str).str.upper() == str(segment).strip().upper()]
-            if "anio" in df.columns:
-                df = df[(pd.to_numeric(df["anio"], errors="coerce") >= min_year) & (pd.to_numeric(df["anio"], errors="coerce") <= max_year)]
-            km_col = next((c for c in ["km","kilometros","kilómetros","mileage","odometro","odómetro"] if c in df.columns), None)
-            if max_km is not None and km_col:
-                df = df[pd.to_numeric(df[km_col], errors="coerce") <= float(max_km)]
-            if fuel is not None and "combustible_norm" in df.columns:
-                vals = {str(x).strip().upper() for x in (fuel if isinstance(fuel,(list,tuple,set)) else [fuel])}
-                df = df[df["combustible_norm"].astype(str).str.upper().isin(vals)]
-
-            # escoger columna de modelo base
-            model_col = next((c for c in ["modelo_base_x","modelo_base","modelo_base_y","modelo_base_match","modelo"] if c in df.columns), "modelo")
-            group_keys = ["marca", model_col, "anio", "combustible_norm"]
-
-            # ordenar por precio asc, desempatar por mayor margen
-            df_sorted = df.sort_values(["precio_final_eur","margin_abs"], ascending=[True, False])
-            cheapest_per_cluster = df_sorted.groupby(group_keys, dropna=False, as_index=False).first()
-
-            # top N por margen descendente
-            tmp = cheapest_per_cluster.sort_values(["margin_abs"], ascending=[False]).head(int(top_n))
+            tmp = rec.q3_segment_price_order(
+                region=region,
+                segment=segment,
+                n=top_n,
+                min_year=min_year,
+                max_year=max_year,
+                mileage_max=max_km,
+                fuel_include=fuel,
+            )
 
             tmp = ensure_output_cols(tmp)
             safe = sanitize_filename(qname)
@@ -268,31 +312,17 @@ def run_from_yaml(dataset_path: Path, yaml_path: Path, outdir: Path):
             results_info.append((qname, f))
             continue
 
-        # special (comparativas por modelo/año)
-        special = q.get("special")
-        if special:
-            model = special.get("model")
-            year  = special.get("year")
-            if model is None or year is None:
-                raise ValueError(f"La consulta especial '{qname}' necesita 'model' y 'year'.")
-            res = rec.query_special(model, int(year))
-            safe = sanitize_filename(qname)
-            f1 = outdir / f"{safe} - by_country.csv"
-            f2 = outdir / f"{safe} - by_subasta.csv"
-            res["by_country"].to_csv(f1, index=False)
-            res["by_subasta"].to_csv(f2, index=False)
-            results_info.append((qname+" (by_country)", f1))
-            results_info.append((qname+" (by_subasta)", f2))
-            continue
-
-        # mapeo de filtros conocidos del YAML -> args de recommend_best
+        # ----- Q1/Q2/GENÉRICAS: recommend_best -----
         year_exact = filters.get("year_exact")
         min_year   = filters.get("min_year")
-        max_km     = filters.get("max_km")
+        max_year   = filters.get("max_year")
+        max_km     = filters.get("max_km") or filters.get("mileage_max")
 
-        # Si viene min_year, filtramos antes
+        # filtros previos directos (para acelerar)
         if min_year is not None and "anio" in rec.df.columns:
             rec.df = rec.df[rec.df["anio"] >= int(min_year)].copy()
+        if max_year is not None and "anio" in rec.df.columns:
+            rec.df = rec.df[rec.df["anio"] <= int(max_year)].copy()
         if max_km is not None:
             km_col = next((c for c in ["km","kilometros","kilómetros","mileage","odometro","odómetro"] if c in rec.df.columns), None)
             if km_col:
@@ -305,6 +335,9 @@ def run_from_yaml(dataset_path: Path, yaml_path: Path, outdir: Path):
             brand_only=brand_only,
             selection=selection,
             year_exact=year_exact,
+            min_year=min_year,
+            max_year=max_year,
+            mileage_max=max_km,
             min_listings_per_group=min_group,
             prefer_cheapest_sort=prefer_cheapest_sort,
             n=top_n,
@@ -317,13 +350,14 @@ def run_from_yaml(dataset_path: Path, yaml_path: Path, outdir: Path):
         tmp.to_csv(f, index=False)
         results_info.append((qname, f))
 
+    # Índice de salidas
     idx = pd.DataFrame([{"query": n, "file": str(p)} for n,p in results_info])
     idx.to_csv(outdir / "queries_index.csv", index=False)
     print(idx.to_string(index=False))
 
 # -------------------- CLI --------------------
 def main():
-    ap = argparse.ArgumentParser(description="Runner de consultas BCA (layout estándar)")
+    ap = argparse.ArgumentParser(description="Runner de consultas BCA (Q1/Q2/Q3 + layout estándar)")
     ap.add_argument("--dataset", required=True, type=Path, help="Ruta del dataset (.parquet/.xlsx/.csv)")
     ap.add_argument("--yaml", required=True, type=Path, help="YAML con la lista de queries")
     ap.add_argument("--outdir", required=True, type=Path, help="Directorio de salida")
