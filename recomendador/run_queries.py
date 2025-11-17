@@ -223,6 +223,51 @@ def run_from_yaml(dataset_path: Path, yaml_path: Path, outdir: Path):
         min_group     = int(q.get("min_listings_per_group", 1))
         prefer_cheapest_sort = bool(q.get("prefer_cheapest_sort", False))
 
+        # ---- Q3: orden de precio dentro de un segmento (cheapest por cluster -> Top-N por margen) ----
+        if qtype in {"q3","segment_price_order"}:
+            segment = q.get("segment") or q.get("segmento")
+            if not segment:
+                raise ValueError(f"La consulta '{qname}' necesita 'segment' (por ejemplo: 'B' o 'SUV COMPACTO')")
+            min_year = int(filters.get("min_year", 2020))
+            max_year = int(filters.get("max_year", 2025))
+            max_km   = filters.get("max_km", 100000)
+            fuel     = filters.get("fuel")  # string o lista opcional
+            top_n    = int(q.get("top_n", 20))
+
+            # Implementación directa aquí (no dependemos del motor)
+            df = rec.df.copy()
+            # columna de segmento disponible
+            seg_col = next((c for c in ["segmento","segment","segmento_norm"] if c in df.columns), None)
+            if not seg_col:
+                raise ValueError("No existe columna de segmento en el dataset (segmento/segment/segmento_norm)")
+            df = df[df[seg_col].astype(str).str.upper() == str(segment).strip().upper()]
+            if "anio" in df.columns:
+                df = df[(pd.to_numeric(df["anio"], errors="coerce") >= min_year) & (pd.to_numeric(df["anio"], errors="coerce") <= max_year)]
+            km_col = next((c for c in ["km","kilometros","kilómetros","mileage","odometro","odómetro"] if c in df.columns), None)
+            if max_km is not None and km_col:
+                df = df[pd.to_numeric(df[km_col], errors="coerce") <= float(max_km)]
+            if fuel is not None and "combustible_norm" in df.columns:
+                vals = {str(x).strip().upper() for x in (fuel if isinstance(fuel,(list,tuple,set)) else [fuel])}
+                df = df[df["combustible_norm"].astype(str).str.upper().isin(vals)]
+
+            # escoger columna de modelo base
+            model_col = next((c for c in ["modelo_base_x","modelo_base","modelo_base_y","modelo_base_match","modelo"] if c in df.columns), "modelo")
+            group_keys = ["marca", model_col, "anio", "combustible_norm"]
+
+            # ordenar por precio asc, desempatar por mayor margen
+            df_sorted = df.sort_values(["precio_final_eur","margin_abs"], ascending=[True, False])
+            cheapest_per_cluster = df_sorted.groupby(group_keys, dropna=False, as_index=False).first()
+
+            # top N por margen descendente
+            tmp = cheapest_per_cluster.sort_values(["margin_abs"], ascending=[False]).head(int(top_n))
+
+            tmp = ensure_output_cols(tmp)
+            safe = sanitize_filename(qname)
+            f = outdir / f"{safe}.csv"
+            tmp.to_csv(f, index=False)
+            results_info.append((qname, f))
+            continue
+
         # special (comparativas por modelo/año)
         special = q.get("special")
         if special:
