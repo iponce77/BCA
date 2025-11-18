@@ -259,21 +259,24 @@ def select_transport_row(df_routes: pd.DataFrame,
 # -------------------------
 # Fallbacks de media
 # -------------------------
-def compute_country_category_means(df_trans: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Precalcula medias por (pais_origen_canon_en, categoría) y medias GLOBAL por categoría.
-    """
+def compute_country_category_means(df_trans: pd.DataFrame):
     rows = []
+    # coalesce LCV
+    df_lcv = df_trans.copy()
+    if "precio_lcv2_eur" in df_lcv.columns or "precio_lcv1_eur" in df_lcv.columns:
+        df_lcv["__precio_lcv__"] = df_lcv["precio_lcv2_eur"].where(
+            pd.notna(df_lcv.get("precio_lcv2_eur")), df_lcv.get("precio_lcv1_eur")
+        )
+
     map_cols = [
         ("passenger_car", "precio_passenger_car_eur"),
         ("suv", "precio_suv_eur"),
-        ("lcv", "precio_lcv2_eur" if "precio_lcv2_eur" in df_trans.columns else
-                "precio_lcv1_eur" if "precio_lcv1_eur" in df_trans.columns else None),
+        ("lcv", "__precio_lcv__"),  # ← usar coalesce
     ]
     for cat, col in map_cols:
-        if not col or col not in df_trans.columns:
+        if not col or col not in df_lcv.columns:
             continue
-        tmp = df_trans[["pais_origen_canon", col]].copy()
+        tmp = df_lcv[["pais_origen_canon", col]].copy()
         tmp = tmp.rename(columns={"pais_origen_canon": "pais_origen", col: "price"})
         tmp["category"] = cat
         rows.append(tmp)
@@ -343,10 +346,21 @@ def enrich_row(row: pd.Series,
     if not cand.empty and price_col in cand.columns:
         best = select_transport_row(cand, ubicacion, brand_list, stop_list)
         if best is not None:
-            val = best.get(price_col, np.nan)
+            used_col = None
+            if cat == "lcv":
+                v2 = best.get("precio_lcv2_eur", np.nan)
+                v1 = best.get("precio_lcv1_eur", np.nan)
+                val = v2 if pd.notna(v2) else v1
+                used_col = "precio_lcv2_eur" if pd.notna(v2) else ("precio_lcv1_eur" if pd.notna(v1) else None)
+            else:
+                col = pick_price_col(cat, df_trans)  # mantiene passenger/suv
+                val = best.get(col, np.nan)
+                used_col = col 
+                   
             if pd.notna(val):
                 transport_price = float(val)
-                rule = f"direct|compound={best.get('origen_compound','')}|score={best.get('__score__',0):.2f}|cat={cat}|col={price_col}"
+                col_tag = used_col if used_col else "n/a"
+                rule = f"direct|compound={best.get('origen_compound','')}|score={best.get('__score__',0):.2f}|cat={cat}|col={col_tag}"
                 conf = 1.0
                 for dc in ["dias_transporte", "dias_single_cars", "dias_full_truck", "dias_est", "dias"]:
                     if dc in best and pd.notna(best[dc]):
