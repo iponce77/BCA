@@ -6,7 +6,7 @@ location_head,country_canonical
 06780 Zörbig,Germany
 10409 Berlin-Prenzlauer Berg,Germany
 12359 Berlin,Germany
-12459  Berlin-Rummelsburg,Germany
+12459 Berlin-Rummelsburg,Germany
 14669 Ketzin,Germany
 15236 Frankfurt (Oder),Germany
 15366 Hoppegarten,Germany
@@ -319,6 +319,7 @@ Milano Linate,Italy
 Milano Malpensa,Italy
 MITRY,France
 MITRY MORY,France
+MITRY MORY - 77,France
 Moncalieri (TO),Italy
 MONTPELLIER,France
 Mosolf GmbH,Germany
@@ -397,6 +398,7 @@ Schöneck,Germany
 Segrate (MI),Italy
 SERENISSIMA SERVICE SRL,Italy
 Settimo Torinese (TO),Italy
+Setúbal,Portugal
 Sevilla,Spain
 Siena,Italy
 Sikora Mikołów,Poland
@@ -414,6 +416,7 @@ Strï¿½ï¿½,Sweden
 Strï¿½ngn,Sweden
 TARANTO,Italy
 Termini Imerese (PA),Italy
+The Netherlands,Netherlands
 Torino,Italy
 TOULOUSE,France
 TRANSCAUSSE AUTOS PARC LOGISTICS,France
@@ -427,6 +430,7 @@ VALENCE -26,France
 VARESE,Italy
 VENDIN LES BETHUNE,France
 Venezia,Italy
+Vercelli,Italy
 Vercelli (VC),Italy
 Vermezzo (MI),Italy
 VERONA,Italy
