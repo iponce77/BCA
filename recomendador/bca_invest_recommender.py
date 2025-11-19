@@ -28,6 +28,7 @@ OUTPUT_COLS = [
     "units_abs_bcn",
     "units_abs_cat",
     "units_abs_esp",
+    "YoY_weighted_esp",
 ]
 
 @dataclass
