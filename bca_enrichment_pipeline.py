@@ -405,19 +405,70 @@ def compute_stability_monthly(ine_norm: pd.DataFrame) -> pd.DataFrame:
     return stab[["region","marca","modelo","anio","combustible","stddev_mensual_units","coef_var_%"]]
 
 def compute_trends(annual: pd.DataFrame) -> pd.DataFrame:
-    df = annual.sort_values(["region","marca","modelo","combustible","anio"]).copy()
-    df["units_prev"]  = df.groupby(["region","marca","modelo","combustible"])["units_abs"].shift(1)
-    df["units_prev3"] = df.groupby(["region","marca","modelo","combustible"])["units_abs"].shift(3)
-    df["YoY_%"]       = np.where((df["units_prev"].fillna(0)==0), np.nan, (df["units_abs"]-df["units_prev"])/df["units_prev"])
-    df["Growth_3a_%"] = np.where((df["units_prev3"].fillna(0)==0), np.nan, (df["units_abs"]-df["units_prev3"])/df["units_prev3"])
+    df = annual.sort_values(
+        ["region", "marca", "modelo", "combustible", "anio"]
+    ).copy()
+
+    # Unidades del año anterior y hace 3 años (por cohorte region+marca+modelo+fuel)
+    df["units_prev"] = df.groupby(
+        ["region", "marca", "modelo", "combustible"]
+    )["units_abs"].shift(1)
+    df["units_prev3"] = df.groupby(
+        ["region", "marca", "modelo", "combustible"]
+    )["units_abs"].shift(3)
+
+    # YoY "raw" (ratio estándar)
+    df["YoY_%"] = np.where(
+        df["units_prev"].fillna(0) == 0,
+        np.nan,
+        (df["units_abs"] - df["units_prev"]) / df["units_prev"],
+    )
+
+    # Crecimiento acumulado 3 años (raw)
+    df["Growth_3a_%"] = np.where(
+        df["units_prev3"].fillna(0) == 0,
+        np.nan,
+        (df["units_abs"] - df["units_prev3"]) / df["units_prev3"],
+    )
+
+    # YoY suavizado por volumen previo:
+    #   - si units_prev es muy bajo, reducimos el impacto de YoY
+    #   - a partir de MIN_UNITS_PREV, el peso es 1 (no se toca)
+    MIN_UNITS_PREV = 20.0
+    weight = np.minimum(1.0, df["units_prev"].fillna(0) / MIN_UNITS_PREV)
+    df["YoY_weighted"] = df["YoY_%"] * weight
+
     def _flag(y):
-        if pd.isna(y): return np.nan
-        if y > 0.10: return 1
-        if y < -0.10: return 0
+        if pd.isna(y):
+            return np.nan
+        if y > 0.10:
+            return 1
+        if y < -0.10:
+            return 0
         return np.nan  # "otro si estable"
+
+    # El flag sigue usando el YoY raw (no ponderado)
     df["trend_flag"] = df["YoY_%"].map(_flag)
-    df["year_rank_in_model"] = df.groupby(["region","marca","modelo","combustible"])["units_abs"].transform(_dense_rank_desc)
-    return df[["region","marca","modelo","anio","combustible","YoY_%","Growth_3a_%","trend_flag","year_rank_in_model"]]
+
+    df["year_rank_in_model"] = df.groupby(
+        ["region", "marca", "modelo", "combustible"]
+    )["units_abs"].transform(_dense_rank_desc)
+
+    return df[
+        [
+            "region",
+            "marca",
+            "modelo",
+            "anio",
+            "combustible",
+            "YoY_%",
+            "Growth_3a_%",
+            "YoY_weighted",
+            "trend_flag",
+            "year_rank_in_model",
+        ]
+    ]
+
 
 def compute_shares_and_ranks(ine_norm: pd.DataFrame):
     # Annual units per cohort
@@ -729,7 +780,7 @@ def _match_region(bca_key: pd.DataFrame, features_fuel, features_nofuel, best_fu
         "units_abs","share_marca_%","share_combustible_%","share_año_%","share_cohorte_%",
         "rank_general","rank_brand_year","rank_year_fuel_model","is_top3_brand_year",
         "best_fuel_units","best_fuel","is_best_fuel","row_vs_best_fuel_%",
-        "YoY_%","Growth_3a_%","trend_flag","year_rank_in_model",
+        "YoY_%","YoY_weighted","Growth_3a_%","trend_flag","year_rank_in_model",
         "antiguedad_media","p50_antiguedad","p75_antiguedad","mix_0_3_%","mix_4_7_%","mix_8mas_%",
         "dominancia_modelo_marca_%","HHI_marca","stddev_mensual_units","coef_var_%"
     ]
@@ -855,9 +906,19 @@ def build_data_dictionary() -> pd.DataFrame:
     add("row_vs_best_fuel_%","Relación entre unidades de la fila y el combustible dominante.",
         "units_abs / best_fuel_units.")
     # Tendencias
-    add("YoY_%","Crecimiento interanual del cohorte.","(units_t - units_{t-1}) / units_{t-1}; si units_{t-1}=0 → NaN.")
-    add("Growth_3a_%","Crecimiento acumulado a 3 años del cohorte.","(units_t - units_{t-3}) / units_{t-3}; si units_{t-3}=0 → NaN.")
-    add("trend_flag","Flag de tendencia","1 si YoY > +10%, 0 si YoY < −10%, NaN si estable. (No redefine meses faltantes).")
+    add("YoY_%",
+        "Crecimiento interanual del cohorte.",
+        "(units_t - units_{t-1}) / units_{t-1}; si units_{t-1}=0 → NaN.")
+    add("YoY_weighted",
+        "Crecimiento interanual ponderado por volumen previo.",
+        "YoY_% * min(1, units_prev / 20); reduce el impacto de YoY cuando units_prev es muy bajo.")
+    add("Growth_3a_%",
+        "Crecimiento acumulado a 3 años del cohorte.",
+        "(units_t - units_{t-3}) / units_{t-3}; si units_{t-3}=0 → NaN.")
+    add("trend_flag",
+        "Flag de tendencia",
+        "1 si YoY > +10%, 0 si YoY < −10%, NaN si estable. (No redefine meses faltantes).")
+
     add("year_rank_in_model","Ranking del año dentro del modelo+combustible.","DENSE_RANK(desc) por (marca,modelo,combustible,región).")
     # Estructura de demanda
     add("antiguedad_media","Antigüedad media de las transmisiones.","Promedio anual reportado por INE/DGT.")
