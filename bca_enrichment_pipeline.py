@@ -461,16 +461,89 @@ def compute_shares_and_ranks(ine_norm: pd.DataFrame):
     dominancia["dominancia_modelo_marca_%"] = dominancia.apply(
         lambda r: _safe_div(r["units_modelo_en_marca_anio"], r["total_marca_year"]), axis=1)
 
-    # Demand structure (if present)
-    edad_cols = [c for c in ["antiguedad_media","p50_antiguedad","p75_antiguedad","mix_0_3_%","mix_4_7_%","mix_8mas_%"]
-                 if c in ine_norm.columns]
-    if edad_cols:
-        estructura = (ine_norm
-                      .groupby(["region","marca","modelo","anio","combustible"], as_index=False)[edad_cols]
-                      .mean(numeric_only=True))
+    # Demand structure:
+    #   - antigüedad_media / p50 / p75: por cohorte (region, marca, modelo, anio, combustible)
+    #   - mix_*_%: a nivel de modelo (region, marca, modelo, combustible), ponderando por unidades,
+    #              para reflejar la distribución real de edades en el mercado y evitar valores 0/100 por cohorte.
+
+    # Base de estructura: una fila por cohorte anual (region, marca, modelo, anio, combustible)
+    estructura = annual[["region","marca","modelo","anio","combustible"]].copy()
+
+    # ---- Edad media y percentiles por cohorte ----
+    edad_cols_present = [c for c in ["antiguedad_media","p50_antiguedad","p75_antiguedad"]
+                         if c in ine_norm.columns]
+    if edad_cols_present:
+        edad_agg = (
+            ine_norm
+            .groupby(["region","marca","modelo","anio","combustible"], as_index=False)[edad_cols_present]
+            .mean(numeric_only=True)
+        )
+        estructura = estructura.merge(
+            edad_agg,
+            on=["region","marca","modelo","anio","combustible"],
+            how="left",
+        )
     else:
-        estructura = annual[["region","marca","modelo","anio","combustible"]].copy()
-        for c in ["antiguedad_media","p50_antiguedad","p75_antiguedad","mix_0_3_%","mix_4_7_%","mix_8mas_%"]:
+        for c in ["antiguedad_media","p50_antiguedad","p75_antiguedad"]:
+            estructura[c] = np.nan
+
+    # ---- Mix de antigüedad agregado por modelo (region, marca, modelo, combustible) ----
+    has_mix_cols = all(
+        c in ine_norm.columns
+        for c in ["mix_0_3_%", "mix_4_7_%", "mix_8mas_%"]
+    )
+    if has_mix_cols:
+        # Usamos las columnas de mix y unidades para reconstruir el mix global del modelo,
+        # ponderando por unidades en cada cohorte/mes.
+        mix_df = ine_norm[[
+            "region","marca","modelo","combustible",
+            "unidades","mix_0_3_%","mix_4_7_%","mix_8mas_%"
+        ]].copy()
+
+        # "unidades" que caen en cada tramo de edad, ponderadas por el % de cada fila
+        for col_src, col_dst in [
+            ("mix_0_3_%", "w_0_3"),
+            ("mix_4_7_%", "w_4_7"),
+            ("mix_8mas_%", "w_8mas"),
+        ]:
+            mix_df[col_dst] = mix_df["unidades"] * mix_df[col_src].fillna(0.0) / 100.0
+
+        agg_mix = (
+            mix_df
+            .groupby(["region","marca","modelo","combustible"], as_index=False)
+            .agg(
+                units_total=("unidades","sum"),
+                n_0_3=("w_0_3","sum"),
+                n_4_7=("w_4_7","sum"),
+                n_8mas=("w_8mas","sum"),
+            )
+        )
+
+        # Convertir a % sobre el total de unidades del modelo en esa región
+        for num_col, out_col in [
+            ("n_0_3", "mix_0_3_%"),
+            ("n_4_7", "mix_4_7_%"),
+            ("n_8mas", "mix_8mas_%"),
+        ]:
+            agg_mix[out_col] = np.where(
+                agg_mix["units_total"] > 0,
+                100.0 * agg_mix[num_col] / agg_mix["units_total"],
+                np.nan,
+            )
+
+        estructura_mix = agg_mix[[
+            "region","marca","modelo","combustible",
+            "mix_0_3_%","mix_4_7_%","mix_8mas_%",
+        ]]
+
+        # Hacemos broadcast del mix (definido a nivel modelo) a cada cohorte anual
+        estructura = estructura.merge(
+            estructura_mix,
+            on=["region","marca","modelo","combustible"],
+            how="left",
+        )
+    else:
+        for c in ["mix_0_3_%","mix_4_7_%","mix_8mas_%"]:
             estructura[c] = np.nan
 
     # ===== Base features por combustible =====
