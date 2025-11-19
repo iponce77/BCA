@@ -15,7 +15,7 @@ jobs:
       NORMALIZADOR_DGT_PATH: normalizacionv2.py
       NORMALIZADOR_WHITELIST_PATH: whitelist.xlsx
       NORMALIZADOR_WEIGHTS_PATH: weights.json
-      DGT_ONLY_LAST_MONTHS: "36"     # últimos 36 meses
+      DGT_ONLY_LAST_MONTHS: "48"     # últimos 36 meses
       DGT_MIN_YYYYMM: ""             # opcional (ej. "202301"); vacío = no forzar mínimo
       DGT_MAX_FILES_PER_RUN: "8"     # procesa 8 meses por run
 
