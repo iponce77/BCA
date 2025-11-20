@@ -45,17 +45,17 @@
     "is_electric": false
   },
   "HEVPetrol": {
-    "canonical_fuel": "phev",
+    "canonical_fuel": "hev",
     "translation_es": "Gasolina y Electrico",
     "is_electric": false
   },
   "Hybrid": {
-    "canonical_fuel": "phev",
+    "canonical_fuel": "hev",
     "translation_es": "Gasolina y Electrico / Diesel y Electrico",
     "is_electric": false
   },
   "MHEVDiesel": {
-    "canonical_fuel": "phev",
+    "canonical_fuel": "hev",
     "translation_es": "Gasolina y Electrico / Diesel y Electrico",
     "is_electric": false
   },
