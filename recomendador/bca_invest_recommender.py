@@ -218,9 +218,10 @@ class BCAInvestRecommender:
                     out["mileage"] = out[c]
                     break
 
-        # fuel_type: prefer 'fuel_type' > 'combustible_norm'
-        if "fuel_type" not in out.columns and "combustible_norm" in out.columns:
-            out["fuel_type"] = out["combustible_norm"]
+        # DESPUÉS: fuel_type SIEMPRE = combustible_norm cuando exista
+       if "combustible_norm" in out.columns:
+           out["fuel_type"] = out["combustible_norm"]
+
 
         # modelo_base: coalesce varios candidatos
         if "modelo_base_x" not in out.columns:
@@ -695,7 +696,10 @@ class BCAInvestRecommender:
                 best_mode = best.dropna().astype(str).str.upper().mode()
                 best_val = best_mode.iloc[0] if not best_mode.empty else np.nan
             else:
-                fuel_series = sub.get("fuel_type", pd.Series(dtype=str)).astype(str).str.upper()
+                fuel_series = sub.get(
+                    "combustible_norm",
+                    sub.get("fuel_type", pd.Series(dtype=str))
+                ).astype(str).str.upper()
                 best_mode = fuel_series.mode()
                 best_val = best_mode.iloc[0] if not best_mode.empty else np.nan
 
