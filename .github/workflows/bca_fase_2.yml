@@ -123,7 +123,7 @@ jobs:
           python transport_enrich_patched.py \
             --excel "${{ env.EXCEL_IN }}" \
             --transporte "bca_transporte_estructurado.csv" \
-            --country_dict "country_dict_ready.en.csv" \
+            --country_dict "country_dict_enriched.csv" \
             --location_aliases "location_country_aliases_ready.en.csv" \
             --body_rules "transport_body_map.v2.json" \
             --brands "compound_brands.v2.json" \
@@ -264,4 +264,5 @@ jobs:
       - name: "Upload results to Google Drive"
         if: ${{ steps.guard_gastos.outcome == 'success' }}   # ← subir cuando ya existe EXCEL_FINAL
         run: python upload_fase2.py
+
 
