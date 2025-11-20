@@ -166,7 +166,7 @@ FUEL_MAP_BCA2INE = {
 
     # --- Gas natural comprimido / CNG / GNC ---
     "cng": "cng",
-    "cngpetrol": "cng",
+    "cngpetrol": "petrol",
     "gnc": "cng",                       # G.N.C., GNC…
     "m": "cng",                         # código raro m/M de BCA
 
@@ -184,6 +184,24 @@ FUEL_MAP_BCA2INE = {
     "unknown": "unknown",
     "": "unknown",
     None: "unknown",
+    
+    # --- alias cortos BCA que vienen en tu Excel ---
+    "d": "diesel",          # D -> Diesel
+    "g": "petrol",          # G -> Gasolina
+    "elc": "electric",      # Elc -> Electrico
+    "gnl": "cng",           # GNL -> CNG (gas natural licuado)
+    "petrolethanol": "petrol",  # PetrolEthanol -> Gasolina
+
+    # --- variantes en español para hidrógeno ---
+    "hidrogeno": "hydrogen",
+
+    # --- combustibles “otros” (DGT/EXTRA) ---
+    "butano": "unknown",
+    "solar": "unknown",
+    "biometano": "unknown",
+    "etanol": "unknown",
+    "biodiesel": "unknown",
+    "otro": "unknown",
 }
 
 def _map_fuel_scalar(f):
