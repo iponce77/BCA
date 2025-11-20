@@ -103,6 +103,26 @@ aliases:
     bifuel: "UNKNOWN"
     unknown: "UNKNOWN"
     UNKNOWN: "UNKNOWN"
+    
+    # --- alias cortos BCA ---
+    D: "DIESEL"
+    G: "PETROL"
+    Elc: "ELECTRICO"
+    M: "GAS (GLP/CNG)"      # CNG abreviado
+    S: "GAS (GLP/CNG)"      # LPG abreviado
+    GNL: "GAS (GLP/CNG)"    # lo agrupamos con GLP/CNG
+
+    # --- variantes mixtas de gasolina/gas ---
+    CNGPetrol: "PETROL"
+    PetrolEthanol: "PETROL"
+
+    # --- combustibles menos frecuentes / “otros” ---
+    BUTANO: "UNKNOWN"
+    BIOMETANO: "UNKNOWN"
+    ETANOL: "UNKNOWN"
+    BIODIESEL: "UNKNOWN"
+    SOLAR: "UNKNOWN"
+    OTRO: "UNKNOWN"
 
 filters:
   allow_kw_cv_equivalence: false
@@ -120,3 +140,4 @@ enrich_params:
   roi:
     cost_cols: ["commission_total_eur","transport_price_eur","fijos_es_eur"]
     price_col: "winning_bid"
+
