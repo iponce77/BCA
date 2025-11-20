@@ -79,13 +79,40 @@ def canon_country(name: str, cdict: dict) -> str:
 
 
 def _es2en_country(name: str) -> str:
+    # name puede venir en ES (del country_dict) o ya en EN
     m = {
-        "españa":"Spain","alemania":"Germany","francia":"France","italia":"Italy","portugal":"Portugal",
-        "dinamarca":"Denmark","suecia":"Sweden","suiza":"Switzerland","austria":"Austria","polonia":"Poland",
-        "luxemburgo":"Luxembourg","paises bajos":"Netherlands","países bajos":"Netherlands","europa":"Europe",
-        "bélgica":"Belgium","belgica":"Belgium"
+        # ES → EN
+        "españa": "Spain",
+        "espana": "Spain",
+
+        "alemania": "Germany",
+        "francia": "France",
+        "italia": "Italy",
+        "portugal": "Portugal",
+        "dinamarca": "Denmark",
+        "suecia": "Sweden",
+        "suiza": "Switzerland",
+        "austria": "Austria",
+        "polonia": "Poland",
+        "luxemburgo": "Luxembourg",
+        "paises bajos": "Netherlands",
+        "países bajos": "Netherlands",
+        "bélgica": "Belgium",
+        "belgica": "Belgium",
+        "finlandia": "Finland",
+        "europa": "Europe",
     }
-    return m.get(normalize_text(name), name)
+
+    key = normalize_text(name)
+
+    # Sinónimos en inglés/europeos → Europe
+    if key in {"europe", "eu", "ue", "european union", "union europea", "union europeenne"}:
+        return "Europe"
+
+    # Si es un canónico ES conocido, lo traduzco;
+    # si ya está en EN o es algo raro, lo devuelvo tal cual.
+    return m.get(key, name)
+
 
 
 def canon_country_en(name: str, cdict: dict) -> str:
