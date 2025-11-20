@@ -6,7 +6,7 @@ from pathlib import Path
 import importlib.util
 
 OUTPUT_COLS = [
-    "link_ficha","make_clean","modelo_base_x","segmento","year","mileage","fuel_type",
+    "link_ficha","make_clean","modelo_base_x","segmento","year","mileage","combustible_norm",
     "transmission-sale_country","auction_name","end_date","winning_bid",
     "precio_final_eur","precio_venta_ganvam","margin_abs","vat_type",
     "units_abs_bcn","units_abs_cat","units_abs_esp", "YoY_weighted_esp",
