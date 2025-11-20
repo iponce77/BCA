@@ -1,174 +1,177 @@
 {
-  "bev": {
+  "BEV": {
     "canonical_fuel": "electric",
+    "translation_es": "Electrico",
     "is_electric": true
   },
-  "bifuel": {
+  "BiFuel": {
     "canonical_fuel": "unknown",
+    "translation_es": "Gasolina/diesel/electrico (puede ser de todo)",
     "is_electric": false
   },
-  "cng": {
+  "CNG": {
     "canonical_fuel": "cng",
+    "translation_es": "CNG",
     "is_electric": false
   },
-  "cngpetrol": {
-    "canonical_fuel": "cng",
+  "CNGPetrol": {
+    "canonical_fuel": "petrol",
+    "translation_es": "Gasolina",
     "is_electric": false
   },
-  "diesel": {
+  "Diesel": {
     "canonical_fuel": "diesel",
+    "translation_es": "Diesel",
     "is_electric": false
   },
-  "Diesel y Electrico": {
-    "canonical_fuel": "phev",
+  "Electric": {
+    "canonical_fuel": "electric",
+    "translation_es": "Electrico",
+    "is_electric": true
+  },
+  "Elc": {
+    "canonical_fuel": "electric",
+    "translation_es": "Electrico",
+    "is_electric": true
+  },
+  "Gasolina": {
+    "canonical_fuel": "petrol",
+    "translation_es": "Gasolina",
     "is_electric": false
   },
-  "Diesel y Eléctrico": {
-    "canonical_fuel": "phev",
+  "FlexFuel": {
+    "canonical_fuel": "petrol",
+    "translation_es": "Gasolina",
     "is_electric": false
   },
-  "Diésel y Eléctrico": {
+  "HEVPetrol": {
     "canonical_fuel": "phev",
+    "translation_es": "Gasolina y Electrico",
     "is_electric": false
   },
-  "dye": {
+  "Hybrid": {
     "canonical_fuel": "phev",
+    "translation_es": "Gasolina y Electrico / Diesel y Electrico",
     "is_electric": false
   },
-  "DYE": {
+  "MHEVDiesel": {
     "canonical_fuel": "phev",
+    "translation_es": "Gasolina y Electrico / Diesel y Electrico",
+    "is_electric": false
+  },
+  "PHEVPetrol": {
+    "canonical_fuel": "phev",
+    "translation_es": "Gasolina y Electrico",
     "is_electric": false
   },
   "DyE": {
     "canonical_fuel": "phev",
-    "is_electric": false
-  },
-  "electric": {
-    "canonical_fuel": "electric",
-    "is_electric": true
-  },
-  "eléctrico": {
-    "canonical_fuel": "electric",
-    "is_electric": true
-  },
-  "flexfuel": {
-    "canonical_fuel": "petrol",
-    "is_electric": false
-  },
-  "FLEXFUEL": {
-    "canonical_fuel": "petrol",
-    "is_electric": false
-  },
-  "G.L.P.": {
-    "canonical_fuel": "lpg",
-    "is_electric": false
-  },
-  "G.N.C.": {
-    "canonical_fuel": "cng",
-    "is_electric": false
-  },
-  "gasolina": {
-    "canonical_fuel": "petrol",
-    "is_electric": false
-  },
-  "Gasolina y Electrico": {
-    "canonical_fuel": "phev",
-    "is_electric": false
-  },
-  "Gasolina y Eléctrico": {
-    "canonical_fuel": "phev",
-    "is_electric": false
-  },
-  "glp": {
-    "canonical_fuel": "lpg",
-    "is_electric": false
-  },
-  "GLP": {
-    "canonical_fuel": "lpg",
-    "is_electric": false
-  },
-  "gnc": {
-    "canonical_fuel": "cng",
-    "is_electric": false
-  },
-  "GNC": {
-    "canonical_fuel": "cng",
-    "is_electric": false
-  },
-  "gye": {
-    "canonical_fuel": "phev",
-    "is_electric": false
-  },
-  "GYE": {
-    "canonical_fuel": "phev",
+    "translation_es": "Diesel y Electrico",
     "is_electric": false
   },
   "GyE": {
     "canonical_fuel": "phev",
+    "translation_es": "Gasolina y Electrico",
     "is_electric": false
   },
-  "hev": {
-    "canonical_fuel": "hev",
+  "CNGPetrol": {
+    "canonical_fuel": "petrol",
+    "translation_es": "Gasolina",
     "is_electric": false
   },
-  "hevdiesel": {
-    "canonical_fuel": "hev",
+  "Petrol": {
+    "canonical_fuel": "petrol",
+    "translation_es": "Gasolina",
     "is_electric": false
   },
-  "hevpetrol": {
-    "canonical_fuel": "hev",
+  "PetrolEthanol": {
+    "canonical_fuel": "petrol",
+    "translation_es": "Gasolina",
     "is_electric": false
   },
-  "hybrid": {
-    "canonical_fuel": "hev",
+  "G": {
+    "canonical_fuel": "petrol",
+    "translation_es": "Gasolina",
     "is_electric": false
   },
-  "hydrogen": {
-    "canonical_fuel": "hydrogen",
+  "D": {
+    "canonical_fuel": "diesel",
+    "translation_es": "Diesel",
     "is_electric": false
   },
-  "lpg": {
-    "canonical_fuel": "lpg",
-    "is_electric": false
-  },
-  "m": {
+  "GNC": {
     "canonical_fuel": "cng",
+    "translation_es": "CNG",
+    "is_electric": false
+  },
+  "GNL": {
+    "canonical_fuel": "cng",
+    "translation_es": "CNG",
     "is_electric": false
   },
   "M": {
     "canonical_fuel": "cng",
+    "translation_es": "CNG",
     "is_electric": false
   },
-  "mhevdiesel": {
-    "canonical_fuel": "diesel",
-    "is_electric": false
-  },
-  "mhevpetrol": {
-    "canonical_fuel": "hev",
-    "is_electric": false
-  },
-  "petrol": {
-    "canonical_fuel": "petrol",
-    "is_electric": false
-  },
-  "phev": {
-    "canonical_fuel": "phev",
-    "is_electric": false
-  },
-  "phevpetrol": {
-    "canonical_fuel": "phev",
-    "is_electric": false
-  },
-  "s": {
+  "GLP": {
     "canonical_fuel": "lpg",
+    "translation_es": "LPG",
+    "is_electric": false
+  },
+  "LPG": {
+    "canonical_fuel": "lpg",
+    "translation_es": "LPG",
     "is_electric": false
   },
   "S": {
     "canonical_fuel": "lpg",
+    "translation_es": "LPG",
     "is_electric": false
   },
-  "unknown": {
+  "HIDROGENO": {
+    "canonical_fuel": "hydrogen",
+    "translation_es": "Hidrogeno",
+    "is_electric": false
+  },
+  "Hydrogen": {
+    "canonical_fuel": "hydrogen",
+    "translation_es": "Hidrogeno",
+    "is_electric": false
+  },
+  "BIOMETANO": {
     "canonical_fuel": "unknown",
+    "translation_es": "Otros",
+    "is_electric": false
+  },
+  "BIODIESEL": {
+    "canonical_fuel": "unknown",
+    "translation_es": "Otros",
+    "is_electric": false
+  },
+  "ETANOL": {
+    "canonical_fuel": "unknown",
+    "translation_es": "Otros",
+    "is_electric": false
+  },
+  "BUTANO": {
+    "canonical_fuel": "unknown",
+    "translation_es": "Otros",
+    "is_electric": false
+  },
+  "SOLAR": {
+    "canonical_fuel": "unknown",
+    "translation_es": "Otros",
+    "is_electric": false
+  },
+  "OTRO": {
+    "canonical_fuel": "unknown",
+    "translation_es": "Otros",
+    "is_electric": false
+  },
+  "Unknown": {
+    "canonical_fuel": "unknown",
+    "translation_es": "Desconocido",
     "is_electric": false
   }
 }
