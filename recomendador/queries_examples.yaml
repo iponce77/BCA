@@ -43,14 +43,16 @@ queries:
   # ---------------- Q3 ----------------
   - name: "Q3 - Orden de precio en segmento SUV compacto (Top 20)"
     type: q3
-    segment: "JC"
-    region: bcn
+    segment: "SUV compacto"
+    region: esp
     top_n: 20
+    mode: cheapest   # mode: max_margin (alternativa)    # orden por precio_final_eur asc (por defecto)
     filters:
       min_year: 2020
       max_year: 2025
       max_km: 100000
-      # fuel: ["GASOLINA","DIESEL"]   # opcional
+      fuel_include: ["GASOLINA", "DIESEL"]
+
       
   # ---------------- Q4 ----------------
   - name: "Q4 - Atractivo Golf 2.0 TDI 2020 DIESEL (BCN)"
