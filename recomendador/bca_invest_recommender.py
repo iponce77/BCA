@@ -341,30 +341,92 @@ class BCAInvestRecommender:
             df = df.merge(sizes, on=group_keys, how="left")
             df = df[df["n_listings"] >= int(min_listings_per_group)].drop(columns=["n_listings"])
 
-        # Selección "vehículo óptimo" = más barato por grupo con desempate por score
-        if selection.lower() == "cheapest":
+        # ----------------------------------------------------
+        # Selección según 'selection': cheapest / max_margin / mean
+        # ----------------------------------------------------
+        sel = (selection or "cheapest").lower()
+
+        # Normalizamos numéricos que vamos a usar
+        if "precio_final_eur" in df.columns:
             df["precio_final_eur"] = pd.to_numeric(df["precio_final_eur"], errors="coerce")
-            df = df[df["precio_final_eur"].notna()]
-            if df.empty:
-                return df.head(0)
-            df_sorted = df.sort_values(["precio_final_eur","score"], ascending=[True, False])
-            picked = (df_sorted.groupby(group_keys, dropna=False, as_index=False).first()
-                      if group_keys else df_sorted.copy())
-            # orden final: por score y margen del candidato escogido
-            sort_cols = ["score","margin_abs"] if not ignore_rotation else ["margin_abs","score"]
+        if "margin_abs" in df.columns:
+            df["margin_abs"] = pd.to_numeric(df["margin_abs"], errors="coerce")
+
+        # --- Modo "cheapest": vehículo más barato por cluster ---
+        if sel == "cheapest":
+            df_cheapest = df[df["precio_final_eur"].notna()]
+            if df_cheapest.empty:
+                return self._format_output(df_cheapest.head(0))
+
+            # orden interno: precio asc, desempate por score desc
+            df_sorted = df_cheapest.sort_values(
+                ["precio_final_eur", "score"], ascending=[True, False]
+            )
+
+            # un vehículo por cluster (el primero tras ese orden)
+            picked = (
+                df_sorted.groupby(group_keys, dropna=False, as_index=False).first()
+                if group_keys else df_sorted.copy()
+            )
+
+            # orden final de los clusters: por score y margen
+            sort_cols = ["score", "margin_abs"] if not ignore_rotation else ["margin_abs", "score"]
             picked = picked.sort_values(sort_cols, ascending=False)
+
             return self._format_output(picked.head(n))
 
-        # Modo "mean": medias por cluster
-        agg = df.groupby(group_keys, dropna=False).agg(
-            precio_medio=("precio_final_eur","mean"),
-            margin_abs_medio=("margin_abs","mean"),
-            n_listings=("precio_final_eur","size"),
-            score=("score","mean")
-        ).reset_index()
-        sort_cols = ["score","margin_abs_medio"] if not ignore_rotation else ["margin_abs_medio","score"]
-        agg = agg.sort_values(sort_cols, ascending=False)
-        return self._format_output(agg.head(n))
+        # --- Modo "max_margin": vehículo con mayor margen por cluster ---
+        elif sel == "max_margin":
+            df_mm = df[df["margin_abs"].notna()]
+            if df_mm.empty:
+                return self._format_output(df_mm.head(0))
+
+            # orden interno: margen desc, desempate por score desc
+            df_sorted = df_mm.sort_values(
+                ["margin_abs", "score"], ascending=[False, False]
+            )
+
+            # un vehículo por cluster (el primero tras ese orden)
+            picked = (
+                df_sorted.groupby(group_keys, dropna=False, as_index=False).first()
+                if group_keys else df_sorted.copy()
+            )
+
+            # orden final de los clusters: margen desc, desempate por score
+            picked = picked.sort_values(["margin_abs", "score"], ascending=[False, False])
+
+            return self._format_output(picked.head(n))
+
+        # --- Modo "mean" (u otros): medias por cluster ---
+        else:
+            if not group_keys:
+                # sin claves de cluster, devolvemos el df ordenado por score/margen
+                sort_cols = ["score", "margin_abs"] if not ignore_rotation else ["margin_abs", "score"]
+                df_sorted = df.sort_values(sort_cols, ascending=False)
+                return self._format_output(df_sorted.head(n))
+
+            agg = df.groupby(group_keys, dropna=False).agg(
+                precio_medio=("precio_final_eur", "mean"),
+                margin_abs_medio=("margin_abs", "mean"),
+                n_listings=("precio_final_eur", "size"),
+                score=("score", "mean"),
+            ).reset_index()
+
+            # orden de clusters: por score y margen medio
+            sort_cols = ["score", "margin_abs_medio"] if not ignore_rotation else ["margin_abs_medio", "score"]
+            agg = agg.sort_values(sort_cols, ascending=False)
+
+            # IMPORTANTE: _format_output espera nombres como precio_final_eur / margin_abs,
+            # así que renombramos si quieres que salga con el layout estándar.
+            agg = agg.rename(
+                columns={
+                    "precio_medio": "precio_final_eur",
+                    "margin_abs_medio": "margin_abs",
+                }
+            )
+
+            return self._format_output(agg.head(n))
+
 
     # ------------------------- Queries especiales (preguntas) -------------------------
     def q1_best_auction_for_model(self, model_query: str, region: str = "bcn",
