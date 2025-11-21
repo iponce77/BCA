@@ -163,18 +163,41 @@ class BCAInvestRecommender:
 
         if not parts:
             return pd.Series(1.0, index=self.df.index)  # neutral
-        wsum = sum(weights) if sum(weights) != 0 else 1.0
-        demand = sum(p*w for p,w in zip(parts, weights)) / wsum
-        return demand.clip(0,1).fillna(0.0)
+        # 2) Alinear a self.df.index
+        aligned = [p.reindex(self.df.index).astype(float) for p in parts]
+
+        num = 0.0
+        den = 0.0
+        for s, w in zip(aligned, weights):
+            mask = s.notna()
+            num = num + s.fillna(0.0) * (w * mask)
+            den = den + (w * mask)
+
+        den = den.replace(0, np.nan)
+        demand = num / den
+
+        # Fila sin ningún sensor → valor neutro (0.5) en vez de 0
+        return demand.fillna(0.5).clip(0, 1)
 
     def _composite_score(self, region: str) -> pd.Series:
         alpha = float(self.cfg.alpha_margin)
-        rot_weight = max(0.0, min(1.0, 1.0 - alpha + self.cfg.rotation_boost))
-        mar_weight = max(0.0, min(1.0, alpha))
+
+        base_rot = max(0.0, 1.0 - alpha)
+        rot_boost = max(0.0, float(self.cfg.rotation_boost))
+
+        rot_raw = base_rot + rot_boost
+        mar_raw = max(0.0, alpha)
+
+        total = mar_raw + rot_raw
+        if total > 0:
+            mar_weight = mar_raw / total
+            rot_weight = rot_raw / total
+        else:
+            mar_weight = rot_weight = 0.5
 
         margin = self._normalize(self.df.get("margin_abs", 0.0))
         demand = self._demand_factor(region)
-        margin_demand = margin * demand  # mercado x margen
+        margin_demand = margin * demand
 
         rot = self._normalize(self._fast_rotation_proxy(region))
 
@@ -649,6 +672,105 @@ class BCAInvestRecommender:
 
         # --- salida en layout estándar ---
         return self._format_output(topn).reset_index(drop=True)
+
+    def q4_attractiveness_for_vehicle(self,
+                                      modelo_base: str,
+                                      region: str = "bcn",
+                                      year: int | None = None,
+                                      fuel: str | list[str] | None = None,
+                                      year_from: int = 2020,
+                                      year_to: int = 2024) -> pd.DataFrame:
+        """Evalúa qué tan atractivo es un modelo_base (+año+fuel) en una región.
+
+        Devuelve una fila con:
+          - score medio,
+          - atractivo en %,
+          - bucket BAJO/MEDIO/ALTO,
+          - demanda media y rotación media como explicación.
+        """
+        df = self.df.copy()
+
+        # --- Filtro por modelo_base_x / modelo_base / modelo ---
+        model_masks = []
+        for col in ["modelo_base_x", "modelo_base", "modelo"]:
+            if col in df.columns:
+                model_masks.append(
+                    df[col].astype(str).str.contains(modelo_base, case=False, na=False)
+                )
+
+        if model_masks:
+            mask_model = model_masks[0]
+            for m in model_masks[1:]:
+                mask_model = mask_model | m
+        else:
+            mask_model = pd.Series(False, index=df.index)
+
+        df = df[mask_model]
+
+        # --- Filtro de año: exacto si lo pasas, rango 2020–2024 por defecto ---
+        if "anio" in df.columns:
+            df["anio"] = pd.to_numeric(df["anio"], errors="coerce")
+            if year is not None:
+                df = df[df["anio"] == int(year)]
+            else:
+                df = df[(df["anio"] >= int(year_from)) & (df["anio"] <= int(year_to))]
+
+        # --- Filtro de fuel (opcional) ---
+        fuels = None
+        if fuel is not None:
+            fuels = fuel if isinstance(fuel, (list, tuple, set)) else [fuel]
+            fuels = {str(f).strip().upper() for f in fuels}
+            fuel_col = "combustible_norm" if "combustible_norm" in df.columns else \
+                       "fuel_type" if "fuel_type" in df.columns else None
+            if fuel_col:
+                df = df[df[fuel_col].astype(str).str.upper().isin(fuels)]
+
+        if df.empty:
+            return pd.DataFrame([{
+                "region": region,
+                "modelo_base": modelo_base,
+                "anio": int(year) if year is not None else None,
+                "fuel": ",".join(sorted(fuels)) if fuels else None,
+                "n_lotes": 0,
+                "attractiveness_pct": np.nan,
+                "attractiveness_bucket": "SIN_DATOS",
+            }])
+
+        # --- Score compuesto global, restringido al subset ---
+        score_all = self._composite_score(region)
+        score_sub = score_all.loc[df.index].fillna(0.0)
+
+        attractiveness = float(score_sub.mean())         # 0..1 aprox
+        attractiveness_pct = round(100.0 * attractiveness, 1)
+
+        # Buckets heurísticos
+        if attractiveness < 0.4:
+            bucket = "BAJO"
+        elif attractiveness < 0.7:
+            bucket = "MEDIO"
+        else:
+            bucket = "ALTO"
+
+        rot_proxy = self._fast_rotation_proxy(region).loc[df.index]
+        demand = self._demand_factor(region).loc[df.index]
+
+        return pd.DataFrame([{
+            "region": region,
+            "modelo_base": str(modelo_base),
+            "anio": int(year) if year is not None else None,
+            "fuel": ",".join(
+                sorted(
+                    df.get("combustible_norm", df.get("fuel_type"))
+                      .astype(str).str.upper().unique()
+                )
+            ) if ("combustible_norm" in df.columns or "fuel_type" in df.columns) else None,
+            "n_lotes": int(len(df)),
+            "score_mean": attractiveness,
+            "attractiveness_pct": attractiveness_pct,
+            "attractiveness_bucket": bucket,
+            "demand_factor_mean": float(demand.mean()),
+            "rotation_proxy_mean": float(rot_proxy.mean()),
+        }])
 
 
     def q5_best_fuel_gap(self, modelo_base: str, anio: int) -> pd.DataFrame:
