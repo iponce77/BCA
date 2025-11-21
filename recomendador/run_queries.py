@@ -250,7 +250,7 @@ def main():
             results_info.append((qname, f))
             continue
 
-        if qtype in {"segment_price_order","q3"}:
+        if qtype in {"segment_price_order", "q3"}:
             segment = q.get("segment") or q.get("segmento") or ""
 
             # lee filtros opcionales con alias habituales
@@ -258,6 +258,7 @@ def main():
             max_year = filters.get("max_year", filters.get("year_to",   2025))
             km_max   = filters.get("max_km",  filters.get("mileage_max", 100000))
             fuel     = filters.get("fuel",    filters.get("fuel_include"))
+            mode     = q.get("mode", "cheapest")  # nuevo
 
             res = rec.q3_price_order_within_segment(
                 segment=segment,
@@ -267,11 +268,13 @@ def main():
                 year_to=max_year,
                 km_max=km_max,
                 fuel_include=fuel,
+                mode=mode,  # nuevo
             )
             f = outdir / f"{safe}.csv"
             ensure_output_cols(res).to_csv(f, index=False)
             results_info.append((qname, f))
             continue
+
 
         if qtype in {"attractiveness", "q4"}:
             model_base = (
