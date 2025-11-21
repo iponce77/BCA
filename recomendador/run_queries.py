@@ -202,9 +202,19 @@ def main():
 
         if qtype in {"best_auction_for_model","q1"}:
             model = q.get("model") or q.get("modelo") or ""
+            year_from = filters.get("year_from")
+            year_to   = filters.get("year_to")
+            if year_from is None:
+                year_from = filters.get("min_year")
+            if year_to is None:
+                year_to = filters.get("max_year")
+
             top_listings, rank = rec.q1_best_auction_for_model(
-                model_query=model, region=region, top_n=top_n,
-                year_from=filters.get("year_from"), year_to=filters.get("year_to"),
+                model_query=model,
+                region=region,
+                top_n=top_n,
+                year_from=year_from,
+                year_to=year_to,
                 mileage_max=filters.get("mileage_max") or filters.get("max_km"),
             )
             f1 = outdir / f"{safe}.csv"
