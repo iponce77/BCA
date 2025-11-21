@@ -866,23 +866,35 @@ class BCAInvestRecommender:
         """Mejor fuel por región y gap vs resto."""
         df = self.df.copy()
 
-        # --- Filtro robusto por modelo_base_x / modelo_base / modelo y año ---
-        model_masks = []
-        for col in ["modelo_base_x", "modelo_base", "modelo"]:
-            if col in df.columns:
-                model_masks.append(
-                    df[col].astype(str).str.contains(modelo_base, case=False, na=False)
-                )
+        # --- Filtro SOLO por modelo_base_x ---
+        if "modelo_base_x" not in df.columns:
+            raise ValueError(
+                "q5_best_fuel_gap requiere la columna 'modelo_base_x' para filtrar el modelo."
+            )
 
-        if model_masks:
-            mask_model = model_masks[0]
-            for m in model_masks[1:]:
-                mask_model = mask_model | m
+        # Si quieres que "X1" incluya también "IX1", usamos contains:
+        mask_model = df["modelo_base_x"].astype(str).str.contains(
+            modelo_base, case=False, na=False
+        )
+        # 👉 Si en algún momento prefieres igualdad exacta (X1 NO incluye IX1):
+        # mask_model = df["modelo_base_x"].astype(str).str.upper().eq(str(modelo_base).upper())
+
+        # --- Filtro por año ---
+        if "anio" in df.columns:
+            year_col = "anio"
+        elif "year" in df.columns:
+            year_col = "year"
         else:
-            mask_model = pd.Series(False, index=df.index)
+            year_col = None
 
-        mask = (df.get("anio", np.nan) == int(anio)) & mask_model
-        sub = df[mask]
+        if year_col is not None:
+            year_num = pd.to_numeric(df[year_col], errors="coerce")
+            mask_year = (year_num == int(anio))
+        else:
+            # si no hay columna de año, no filtramos por año
+            mask_year = pd.Series(True, index=df.index)
+
+        sub = df[mask_model & mask_year]
 
         out_rows = []
         for r in REGIONS:
@@ -895,7 +907,7 @@ class BCAInvestRecommender:
             if best is None and gap is None:
                 continue
 
-            # mejor fuel: modo de best_fuel_{r} si existe; si no, fuel_type más frecuente
+            # mejor fuel: modo de best_fuel_{r} si existe; si no, fuel_type/combustible_norm más frecuente
             if best is not None and best.notna().any():
                 best_mode = best.dropna().astype(str).str.upper().mode()
                 best_val = best_mode.iloc[0] if not best_mode.empty else np.nan
@@ -907,7 +919,7 @@ class BCAInvestRecommender:
                 best_mode = fuel_series.mode()
                 best_val = best_mode.iloc[0] if not best_mode.empty else np.nan
 
-            # gap medio: 1 - media(row_vs_best...), ajustando % si hace falta
+            # gap medio: 1 - media(row_vs_best...), ajustando % si viene en 0–100
             if gap is not None and gap.notna().any():
                 g = pd.to_numeric(gap, errors="coerce")
                 if g.max(skipna=True) and g.max(skipna=True) > 1.0:
@@ -916,7 +928,9 @@ class BCAInvestRecommender:
             else:
                 gap_mean = np.nan
 
-            out_rows.append({"region": r, "best_fuel": best_val, "gap_vs_rest_mean": gap_mean})
+            out_rows.append(
+                {"region": r, "best_fuel": best_val, "gap_vs_rest_mean": gap_mean}
+            )
 
         return pd.DataFrame(out_rows)
 
