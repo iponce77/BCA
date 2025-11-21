@@ -7,10 +7,11 @@ import importlib.util
 
 OUTPUT_COLS = [
     "link_ficha","make_clean","modelo_base_x","segmento","year","mileage","combustible_norm",
-    "transmission-sale_country","auction_name","end_date","winning_bid",
+    "auction_name","winning_bid",
     "precio_final_eur","precio_venta_ganvam","margin_abs","vat_type",
-    "units_abs_bcn","units_abs_cat","units_abs_esp", "YoY_weighted_esp",
+    "units_abs_bcn","units_abs_cat","units_abs_esp","YoY_weighted_esp",
 ]
+
 
 
 def normalize_fuel(x: str) -> str:
@@ -110,30 +111,40 @@ def ensure_output_cols(df: pd.DataFrame) -> pd.DataFrame:
     # Derivados/mapeos mínimos para layout
     if "auction_name" not in out.columns and "sale_name" in out.columns:
         out["auction_name"] = out["sale_name"]
+
     if "year" not in out.columns:
         for c in ["anio","Año","year_bca"]:
             if c in out.columns:
-                out["year"] = out[c]; break
+                out["year"] = out[c]
+                break
+
     if "mileage" not in out.columns:
         for c in ["km","kilometros","kilómetros","odometro","odómetro"]:
             if c in out.columns:
-                out["mileage"] = out[c]; break
-    if "fuel_type" not in out.columns and "combustible_norm" in out.columns:
-        out["fuel_type"] = out["combustible_norm"]
+                out["mileage"] = out[c]
+                break
+
+    # Asegurar combustible_norm como fuel normalizado
+    if "combustible_norm" not in out.columns:
+        if "fuel_type" in out.columns:
+            # reutilizamos normalize_fuel definido arriba
+            out["combustible_norm"] = out["fuel_type"].map(normalize_fuel)
+        else:
+            out["combustible_norm"] = pd.NA
+
     if "modelo_base_x" not in out.columns:
         for c in ["modelo_base", "modelo_base_y", "modelo_base_match", "modelo"]:
             if c in out.columns:
                 out["modelo_base_x"] = out[c]
                 break
-    # transmission-sale_country
-    if "transmission-sale_country" not in out.columns:
-        t = out.get("transmission", "")
-        sc = out.get("sale_country", "")
-        out["transmission-sale_country"] = t.astype(str).str.strip() + " - " + sc.astype(str).str.strip()
+
+    # OJO: eliminamos el bloque que creaba transmission-sale_country
+    # (ya no forma parte de OUTPUT_COLS)
 
     for c in OUTPUT_COLS:
         if c not in out.columns:
             out[c] = pd.NA
+
     return out[OUTPUT_COLS]
 
 def main():
