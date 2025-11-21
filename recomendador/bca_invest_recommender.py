@@ -762,14 +762,138 @@ class BCAInvestRecommender:
         df_out = df_sorted.loc[selected_idx]
         return self._format_output(df_out).reset_index(drop=True)
 
-    def q4_attractiveness_for_vehicle(self,
-                                      modelo_base: str,
-                                      region: str = "bcn",
-                                      year: int | None = None,
-                                      fuel: str | list[str] | None = None,
-                                      year_from: int = 2020,
-                                      year_to: int = 2024) -> pd.DataFrame:
-        """Evalúa qué tan atractivo es un modelo_base (+año+fuel) en una región.
+def q4_attractiveness_for_vehicle(
+    self,
+    modelo_base: str,
+    region: str = "bcn",
+    year: int | None = None,
+    fuel: str | list[str] | None = None,
+    year_from: int = 2020,
+    year_to: int = 2024,
+) -> pd.DataFrame:
+    """
+    Evalúa qué tan atractivo es un modelo_base_x (+año+fuel) en una región.
+
+    Devuelve una fila con:
+      - score medio,
+      - atractivo en %,
+      - bucket BAJO/MEDIO/ALTO,
+      - demanda media y rotación media como explicación.
+    """
+    df = self.df.copy()
+
+    # --- Filtro SOLO por modelo_base_x ---
+    if "modelo_base_x" not in df.columns:
+        raise ValueError(
+            "q4_attractiveness_for_vehicle requiere la columna 'modelo_base_x' para filtrar el modelo."
+        )
+
+    mask_model = df["modelo_base_x"].astype(str).str.contains(
+        modelo_base, case=False, na=False
+    )
+    # Igualdad exacta alternativa:
+    # mask_model = df["modelo_base_x"].astype(str).str.upper().eq(str(modelo_base).upper())
+
+    df = df[mask_model]
+
+    # --- Filtro de año: exacto si lo pasas, rango 2020–2024 por defecto ---
+    if "anio" in df.columns:
+        df["anio"] = pd.to_numeric(df["anio"], errors="coerce")
+        if year is not None:
+            df = df[df["anio"] == int(year)]
+        else:
+            df = df[(df["anio"] >= int(year_from)) & (df["anio"] <= int(year_to))]
+
+    # --- Filtro de fuel (opcional) ---
+    fuels = None
+    if fuel is not None:
+        fuels = fuel if isinstance(fuel, (list, tuple, set)) else [fuel]
+        fuels = {str(f).strip().upper() for f in fuels}
+        fuel_col = (
+            "combustible_norm"
+            if "combustible_norm" in df.columns
+            else "fuel_type"
+            if "fuel_type" in df.columns
+            else None
+        )
+        if fuel_col:
+            df = df[df[fuel_col].astype(str).str.upper().isin(fuels)]
+
+    if df.empty:
+        return pd.DataFrame(
+            [
+                {
+                    "region": region,
+                    "modelo_base_x": modelo_base,
+                    "anio": int(year) if year is not None else None,
+                    "fuel": ",".join(sorted(fuels)) if fuels else None,
+                    "n_lotes": 0,
+                    "score_mean": np.nan,
+                    "attractiveness_pct": np.nan,
+                    "attractiveness_bucket": "SIN_DATOS",
+                    "demand_factor_mean": np.nan,
+                    "rotation_proxy_mean": np.nan,
+                }
+            ]
+        )
+
+    # --- Score compuesto global, restringido al subset ---
+    score_all = self._composite_score(region)
+    score_sub = score_all.loc[df.index].fillna(0.0)
+
+    attractiveness = float(score_sub.mean())  # ~0..1
+    attractiveness_pct = round(100.0 * attractiveness, 1)
+
+    # Buckets heurísticos
+    if attractiveness < 0.4:
+        bucket = "BAJO"
+    elif attractiveness < 0.7:
+        bucket = "MEDIO"
+    else:
+        bucket = "ALTO"
+
+    rot_proxy = self._fast_rotation_proxy(region).loc[df.index]
+    demand = self._demand_factor(region).loc[df.index]
+
+    return pd.DataFrame(
+        [
+            {
+                "region": region,
+                "modelo_base_x": str(modelo_base),
+                "anio": int(year) if year is not None else None,
+                "fuel": ",".join(
+                    sorted(
+                        df.get(
+                            "combustible_norm",
+                            df.get("fuel_type", pd.Series(dtype=str)),
+                        )
+                        .astype(str)
+                        .str.upper()
+                        .unique()
+                    )
+                )
+                if ("combustible_norm" in df.columns or "fuel_type" in df.columns)
+                else None,
+                "n_lotes": int(len(df)),
+                "score_mean": attractiveness,
+                "attractiveness_pct": attractiveness_pct,
+                "attractiveness_bucket": bucket,
+                "demand_factor_mean": float(demand.mean()),
+                "rotation_proxy_mean": float(rot_proxy.mean()),
+            }
+        ]
+    )
+    def q4_attractiveness_for_vehicle(
+        self,
+        modelo_base: str,
+        region: str = "bcn",
+        year: int | None = None,
+        fuel: str | list[str] | None = None,
+        year_from: int = 2020,
+        year_to: int = 2024,
+    ) -> pd.DataFrame:
+        """
+        Evalúa qué tan atractivo es un modelo_base_x (+año+fuel) en una región.
 
         Devuelve una fila con:
           - score medio,
@@ -779,20 +903,17 @@ class BCAInvestRecommender:
         """
         df = self.df.copy()
 
-        # --- Filtro por modelo_base_x / modelo_base / modelo ---
-        model_masks = []
-        for col in ["modelo_base_x", "modelo_base", "modelo"]:
-            if col in df.columns:
-                model_masks.append(
-                    df[col].astype(str).str.contains(modelo_base, case=False, na=False)
-                )
+        # --- Filtro SOLO por modelo_base_x ---
+        if "modelo_base_x" not in df.columns:
+            raise ValueError(
+                "q4_attractiveness_for_vehicle requiere la columna 'modelo_base_x' para filtrar el modelo."
+            )
 
-        if model_masks:
-            mask_model = model_masks[0]
-            for m in model_masks[1:]:
-                mask_model = mask_model | m
-        else:
-            mask_model = pd.Series(False, index=df.index)
+        mask_model = df["modelo_base_x"].astype(str).str.contains(
+            modelo_base, case=False, na=False
+        )
+        # Igualdad exacta alternativa:
+        # mask_model = df["modelo_base_x"].astype(str).str.upper().eq(str(modelo_base).upper())
 
         df = df[mask_model]
 
@@ -809,27 +930,39 @@ class BCAInvestRecommender:
         if fuel is not None:
             fuels = fuel if isinstance(fuel, (list, tuple, set)) else [fuel]
             fuels = {str(f).strip().upper() for f in fuels}
-            fuel_col = "combustible_norm" if "combustible_norm" in df.columns else \
-                       "fuel_type" if "fuel_type" in df.columns else None
+            fuel_col = (
+                "combustible_norm"
+                if "combustible_norm" in df.columns
+                else "fuel_type"
+                if "fuel_type" in df.columns
+                else None
+            )
             if fuel_col:
                 df = df[df[fuel_col].astype(str).str.upper().isin(fuels)]
 
         if df.empty:
-            return pd.DataFrame([{
-                "region": region,
-                "modelo_base": modelo_base,
-                "anio": int(year) if year is not None else None,
-                "fuel": ",".join(sorted(fuels)) if fuels else None,
-                "n_lotes": 0,
-                "attractiveness_pct": np.nan,
-                "attractiveness_bucket": "SIN_DATOS",
-            }])
+            return pd.DataFrame(
+                [
+                    {
+                        "region": region,
+                        "modelo_base_x": modelo_base,
+                        "anio": int(year) if year is not None else None,
+                        "fuel": ",".join(sorted(fuels)) if fuels else None,
+                        "n_lotes": 0,
+                        "score_mean": np.nan,
+                        "attractiveness_pct": np.nan,
+                        "attractiveness_bucket": "SIN_DATOS",
+                        "demand_factor_mean": np.nan,
+                        "rotation_proxy_mean": np.nan,
+                    }
+                ]
+            )
 
         # --- Score compuesto global, restringido al subset ---
         score_all = self._composite_score(region)
         score_sub = score_all.loc[df.index].fillna(0.0)
 
-        attractiveness = float(score_sub.mean())         # 0..1 aprox
+        attractiveness = float(score_sub.mean())  # ~0..1
         attractiveness_pct = round(100.0 * attractiveness, 1)
 
         # Buckets heurísticos
@@ -843,24 +976,34 @@ class BCAInvestRecommender:
         rot_proxy = self._fast_rotation_proxy(region).loc[df.index]
         demand = self._demand_factor(region).loc[df.index]
 
-        return pd.DataFrame([{
-            "region": region,
-            "modelo_base": str(modelo_base),
-            "anio": int(year) if year is not None else None,
-            "fuel": ",".join(
-                sorted(
-                    df.get("combustible_norm", df.get("fuel_type"))
-                      .astype(str).str.upper().unique()
-                )
-            ) if ("combustible_norm" in df.columns or "fuel_type" in df.columns) else None,
-            "n_lotes": int(len(df)),
-            "score_mean": attractiveness,
-            "attractiveness_pct": attractiveness_pct,
-            "attractiveness_bucket": bucket,
-            "demand_factor_mean": float(demand.mean()),
-            "rotation_proxy_mean": float(rot_proxy.mean()),
-        }])
-
+        return pd.DataFrame(
+            [
+                {
+                    "region": region,
+                    "modelo_base_x": str(modelo_base),
+                    "anio": int(year) if year is not None else None,
+                    "fuel": ",".join(
+                        sorted(
+                            df.get(
+                                "combustible_norm",
+                                df.get("fuel_type", pd.Series(dtype=str)),
+                            )
+                            .astype(str)
+                            .str.upper()
+                            .unique()
+                        )
+                    )
+                    if ("combustible_norm" in df.columns or "fuel_type" in df.columns)
+                    else None,
+                    "n_lotes": int(len(df)),
+                    "score_mean": attractiveness,
+                    "attractiveness_pct": attractiveness_pct,
+                    "attractiveness_bucket": bucket,
+                    "demand_factor_mean": float(demand.mean()),
+                    "rotation_proxy_mean": float(rot_proxy.mean()),
+                }
+            ]
+        )
 
     def q5_best_fuel_gap(self, modelo_base: str, anio: int) -> pd.DataFrame:
         """Mejor fuel por región y gap vs resto."""
