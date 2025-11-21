@@ -88,3 +88,57 @@ queries:
       gearbox: automatic
       min_year: 2019
       max_year: 2024
+  # ---------------- Plantilla genérica completa ----------------
+  - name: "GEN - Plantilla completa (modificar a gusto)"
+    type: generic
+
+    # --- parámetros generales ---
+    region: bcn                 # bcn / cat / esp → región usada en el score
+    top_n: 20                   # nº máximo de filas a devolver
+    selection: cheapest         # cheapest | max_margin | mean
+
+    prefer_fast: false          # true = boost de rotación (rotation_boost=0.3)
+    ignore_rotation: false      # true = score solo por margen (alpha=1.0)
+    brand_only: false           # (hoy sin uso real; reservado)
+
+    min_listings_per_group: 1   # mínimo de lotes por cluster
+    prefer_cheapest_sort: false # matiz en orden final (se usa poco)
+
+    cluster:
+      include_sale_country: true  # si el cluster distingue país de subasta
+      include_sale_name: true     # si el cluster distingue nombre de subasta
+
+    # --- filtros específicos de esta query ---
+    filters:
+
+      # EDAD / AÑO
+      max_age_years: 6           # edad máxima (años desde hoy; usa columna anio)
+      year_exact: [2020, 2021]   # año(s) exactos; también puede ser un solo int
+
+      # PRECIO
+      min_price: 5000            # precio_final_eur >= 5000
+      max_price: 15000           # precio_final_eur <= 15000
+
+      # KILOMETRAJE
+      mileage_min: 20000         # km mínimos
+      mileage_max: 120000        # km máximos
+      max_km: 120000             # alias de mileage_max
+
+      # FUEL (usa combustible_norm / fuel_type normalizado)
+      fuel_include: ["DIESEL", "GASOLINA"]    # incluir solo estos combustibles
+      fuel_exclude: ["BEV", "PHEV"]           # excluir estos combustibles
+      combustible_include: []                 # alias de fuel_include
+      combustible_exclude: []                 # alias de fuel_exclude
+
+      # CAJA DE CAMBIOS
+      gearbox: automatic          # automatic / manual (se mira en transmission)
+      transmission: automatic     # alias de gearbox
+
+      # SEGMENTO (segmento / segment / segmento_norm)
+      segment: ["SUV compacto"]   # incluir estos segmentos
+      segment_include: []         # alias de segment
+      segment_exclude: ["LUXURY"] # excluir segmentos
+
+      # NOTA: la generic actual NO usa aún min_year/max_year ni modelo_base_x.
+      # Esos filtros están en Q1–Q3–Q5 o habrá que añadirlos si los queremos aquí.
+
