@@ -369,20 +369,16 @@ class BCAInvestRecommender:
         """
         df = self.df.copy()
 
-        # 1) Filtro por modelo usando modelo_base_x/modelo/model...
-        mask_parts = []
-        for col in ["modelo_base_x", "modelo", "model", "model_bca_raw", "modelo_detectado"]:
-            if col in df.columns:
-                mask_parts.append(
-                    df[col].astype(str).str.contains(model_query, case=False, na=False)
-                )
+        # 1) Filtro por modelo SOLO usando modelo_base_x
+        if "modelo_base_x" not in df.columns:
+            raise ValueError(
+                "q1_best_auction_for_model requiere la columna 'modelo_base_x' para filtrar el modelo."
+            )
 
-        if mask_parts:
-            mask_model = mask_parts[0]
-            for m in mask_parts[1:]:
-                mask_model = mask_model | m
-        else:
-            mask_model = pd.Series(False, index=df.index)
+        # Versión con 'contiene' (X1 también captura IX1):
+        mask_model = df["modelo_base_x"].astype(str).str.contains(
+            model_query, case=False, na=False
+        )
 
         df = df[mask_model]
 
