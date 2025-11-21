@@ -314,38 +314,110 @@ def main():
             results_info.append((qname, f))
             continue
 
-        # --- consultas genéricas (compat con V1) ---
-        base_df = rec.df
-        trans = filters.get("transmission") or filters.get("gearbox")
-        if trans: base_df = filter_by_transmission(base_df, trans)
-        fuel_inc = filters.get("fuel_include") or filters.get("combustible_include")
-        fuel_exc = filters.get("fuel_exclude") or filters.get("combustible_exclude")
-        base_df = filter_by_fuel(base_df, include=fuel_inc, exclude=fuel_exc)
+        # --- NUEVA consulta genérica flexible ---
+        if qtype in {"generic"}:
+            filters = q.get("filters", {}) or {}
+            base_df = rec.df
 
-        rec_local = mod.BCAInvestRecommender(base_df, cfg=rcfg)
-        tmp = rec_local.recommend_best(
-            region=region,
-            max_age_years=filters.get("max_age_years"),
-            max_price=filters.get("max_price"),
-            min_price=filters.get("min_price"),
-            ignore_rotation=ignore_rotation,
-            prefer_fast=prefer_fast,
-            brand_only=brand_only,
-            selection=selection,  # default "cheapest"
-            year_exact=filters.get("year_exact"),
-            segment_include=filters.get("segment") or filters.get("segment_include"),
-            segment_exclude=filters.get("segment_exclude"),
-            mileage_min=filters.get("mileage_min"),
-            mileage_max=filters.get("mileage_max") or filters.get("max_km"),
-            include_sale_country=bool(cluster.get("include_sale_country", True)),
-            include_sale_name=bool(cluster.get("include_sale_name", True)),
-            min_listings_per_group=min_listings_per_group,
-            prefer_cheapest_sort=prefer_cheapest_sort,
-            n=top_n
-        )
-        f = outdir / f"{safe}.csv"
-        ensure_output_cols(tmp).to_csv(f, index=False)
-        results_info.append((qname, f))
+            # 1) Modelo (solo modelo_base_x)
+            model = (
+                filters.get("model")
+                or filters.get("modelo_base")
+                or filters.get("modelo")
+                or q.get("model")
+                or q.get("modelo_base")
+                or q.get("modelo")
+            )
+            if model and "modelo_base_x" in base_df.columns:
+                base_df = base_df[
+                    base_df["modelo_base_x"].astype(str).str.contains(
+                        str(model), case=False, na=False
+                    )
+                ]
+
+            # 2) Años: exacto o rango
+            year_exact = (
+                filters.get("year")
+                or filters.get("year_exact")
+                or q.get("year")
+                or q.get("anio")
+            )
+            min_year = filters.get("min_year") or filters.get("year_from")
+            max_year = filters.get("max_year") or filters.get("year_to")
+
+            if "anio" in base_df.columns:
+                year_num = pd.to_numeric(base_df["anio"], errors="coerce")
+                if year_exact:
+                    if isinstance(year_exact, (list, tuple, set)):
+                        ys = [int(y) for y in year_exact]
+                        base_df = base_df[year_num.isin(ys)]
+                    else:
+                        base_df = base_df[year_num == int(year_exact)]
+                else:
+                    if min_year is not None:
+                        base_df = base_df[year_num >= int(min_year)]
+                    if max_year is not None:
+                        base_df = base_df[year_num <= int(max_year)]
+
+            # 3) Caja de cambios
+            trans = filters.get("transmission") or filters.get("gearbox")
+            if trans:
+                base_df = filter_by_transmission(base_df, trans)
+
+            # 4) Fuel
+            fuel_inc = (
+                filters.get("fuel_include")
+                or filters.get("combustible_include")
+                or q.get("fuel")
+                or q.get("combustible")
+            )
+            fuel_exc = filters.get("fuel_exclude") or filters.get("combustible_exclude")
+            base_df = filter_by_fuel(base_df, include=fuel_inc, exclude=fuel_exc)
+
+            # 5) Segmento
+            seg_inc = filters.get("segment") or filters.get("segment_include")
+            seg_exc = filters.get("segment_exclude")
+
+            # 6) Kilometraje
+            mileage_min = filters.get("mileage_min") or filters.get("min_km")
+            mileage_max = filters.get("mileage_max") or filters.get("max_km")
+
+            # 7) Precios
+            max_price = filters.get("max_price")
+            min_price = filters.get("min_price")
+
+            # 8) max_age_years (edad máxima) ya la pasamos a recommend_best
+            max_age_years = filters.get("max_age_years")
+
+            # Recommender local sobre el subset
+            rec_local = mod.BCAInvestRecommender(base_df, cfg=rcfg)
+
+            tmp = rec_local.recommend_best(
+                region=region,
+                max_age_years=max_age_years,
+                max_price=max_price,
+                min_price=min_price,
+                ignore_rotation=ignore_rotation,
+                prefer_fast=prefer_fast,
+                brand_only=brand_only,
+                selection=selection,              # "cheapest", "mean" o "max_margin"
+                year_exact=year_exact,
+                segment_include=seg_inc,
+                segment_exclude=seg_exc,
+                mileage_min=mileage_min,
+                mileage_max=mileage_max,
+                include_sale_country=bool(cluster.get("include_sale_country", True)),
+                include_sale_name=bool(cluster.get("include_sale_name", True)),
+                min_listings_per_group=min_listings_per_group,
+                prefer_cheapest_sort=prefer_cheapest_sort,
+                n=top_n,
+            )
+
+            f = outdir / f"{safe}.csv"
+            ensure_output_cols(tmp).to_csv(f, index=False)
+            results_info.append((qname, f))
+            continue
+
 
     idx = pd.DataFrame([{"query": n, "file": str(p)} for n,p in results_info])
     idx.to_csv(outdir / "queries_index.csv", index=False)
