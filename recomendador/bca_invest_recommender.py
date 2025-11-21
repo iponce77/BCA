@@ -601,77 +601,166 @@ class BCAInvestRecommender:
         return self._format_output(df_sel).reset_index(drop=True)
 
 
-    def q3_price_order_within_segment(self,
-                                      segment: str,
-                                      region: str = "bcn",
-                                      top_n: int = 20,
-                                      year_from: Optional[int] = None,
-                                      year_to: Optional[int] = None,
-                                      km_max: Optional[float] = None,
-                                      fuel_include: Optional[Union[str, List[str]]] = None) -> pd.DataFrame:
+    def q3_price_order_within_segment(
+        self,
+        segment: str,
+        region: str = "bcn",
+        top_n: int = 20,
+        year_from: Optional[int] = None,
+        year_to: Optional[int] = None,
+        km_max: Optional[float] = None,
+        fuel_include: Optional[Union[str, List[str]]] = None,
+        mode: str = "cheapest",
+    ) -> pd.DataFrame:
         """
-        Dentro de un segmento: 1) filtra, 2) elige el más barato por cluster (marca+modelo_base+anio+fuel),
-        3) ordena por margin_abs desc y devuelve Top-N sin repetir cluster.
-        Defaults: 2020–2025, 100.000 km, fuel opcional.
+        Q3 — Dentro de un segmento, ¿cuáles son los mejores lotes?
+
+        Lógica:
+        1) Filtra por segmento + rango de años + km máximos + fuel opcional.
+        2) Calcula un score informativo usando el modelo de recomendación.
+        3) Ordena:
+           - mode="cheapest"   -> precio_final_eur asc, desempate por margin_abs desc y score desc.
+           - mode="max_margin" -> margin_abs desc, desempate por score desc y precio_final_eur asc.
+        4) Aplica un límite de repetición por cluster (marca+modelo+anio+fuel):
+           máximo el 10% de N por cluster.
+        5) Devuelve los Top-N en el layout estándar.
         """
         df = self.df.copy()
 
         # --- segment filter (robusto) ---
-        seg_col = next((c for c in ["segmento","segment","segmento_norm"] if c in df.columns), None)
-        if not seg_col:
-            raise ValueError("No existe columna segmento/segment/segmento_norm en el dataset")
         seg_val = str(segment).strip().upper()
+        seg_col = None
+        for c in ["segmento_norm", "segmento", "segment"]:
+            if c in df.columns:
+                seg_col = c
+                break
+        if seg_col is None:
+            raise ValueError(
+                "No se encuentra ninguna columna de segmento "
+                "('segmento_norm'/'segmento'/'segment')."
+            )
+
         df = df[df[seg_col].astype(str).str.upper() == seg_val]
 
         # --- defaults ---
-        if year_from is None: year_from = 2020
-        if year_to   is None: year_to   = 2025
-        if km_max    is None: km_max    = 100000
+        if year_from is None:
+            year_from = 2020
+        if year_to is None:
+            year_to = 2025
+        if km_max is None:
+            km_max = 100000
 
         # --- year filter ---
-        if "anio" in df.columns:
-            df = df[(pd.to_numeric(df["anio"], errors="coerce") >= int(year_from)) &
-                    (pd.to_numeric(df["anio"], errors="coerce") <= int(year_to))]
+        year_col = "anio" if "anio" in df.columns else (
+            "year" if "year" in df.columns else None
+        )
+        if year_col is not None:
+            year_num = pd.to_numeric(df[year_col], errors="coerce")
+            df = df[(year_num >= int(year_from)) & (year_num <= int(year_to))]
 
         # --- km filter ---
-        km_col = next((c for c in ["mileage","km","kilometros","kilómetros","odometro","odómetro"] if c in df.columns), None)
+        km_col = None
+        for c in ["mileage", "km", "kilometros", "kilómetros", "odometro", "odómetro"]:
+            if c in df.columns:
+                km_col = c
+                break
         if km_col is not None and km_max is not None:
             df = df[pd.to_numeric(df[km_col], errors="coerce") <= float(km_max)]
 
         # --- fuel filter (opcional) ---
         if fuel_include is not None and "combustible_norm" in df.columns:
-            fuels = {str(x).strip().upper() for x in (fuel_include if isinstance(fuel_include,(list,tuple,set)) else [fuel_include])}
+            if isinstance(fuel_include, (list, tuple, set)):
+                fuels = {str(x).strip().upper() for x in fuel_include}
+            else:
+                fuels = {str(fuel_include).strip().upper()}
             df = df[df["combustible_norm"].astype(str).str.upper().isin(fuels)]
 
         if df.empty:
             return self._format_output(df).head(0)
 
-        # --- score informativo (no decide el ranking final) ---
+        # --- score informativo (no decide el ranking principal) ---
         prev_cfg = self.cfg
-        self.cfg = RecommenderConfig(alpha_margin=prev_cfg.alpha_margin,
-                                     rotation_boost=prev_cfg.rotation_boost,
-                                     demand=prev_cfg.demand)
-        df = df.copy()
-        df["score"] = self._composite_score(region).loc[df.index].fillna(0.0)
-        self.cfg = prev_cfg
+        try:
+            self.cfg = RecommenderConfig(
+                alpha_margin=prev_cfg.alpha_margin,
+                rotation_boost=prev_cfg.rotation_boost,
+                demand=prev_cfg.demand,
+            )
+            score_series = self._composite_score(region)
+            df = df.copy()
+            df["score"] = score_series.loc[df.index].fillna(0.0)
+        finally:
+            self.cfg = prev_cfg
 
-        # --- cheapest por cluster (sin país/subasta) ---
-        model_col = "modelo_base_x" if "modelo_base_x" in df.columns else \
-                    next((c for c in ["modelo_base","modelo_base_y","modelo_base_match","modelo"] if c in df.columns), "modelo")
-        group_keys = ["marca", model_col, "anio", "combustible_norm"]
-        for c in ["precio_final_eur","margin_abs"]:
+        # asegurar numéricos
+        for c in ["precio_final_eur", "margin_abs"]:
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors="coerce")
 
-        # orden interno para el pick: precio asc, desempate por mayor margen y mayor score
-        df_sorted = df.sort_values(["precio_final_eur","margin_abs","score"], ascending=[True, False, False])
-        cheapest_per_cluster = df_sorted.groupby(group_keys, dropna=False, as_index=False).first()
+        # --- orden principal según mode ---
+        mode_norm = (mode or "cheapest").lower()
+        if mode_norm not in {"cheapest", "max_margin"}:
+            mode_norm = "cheapest"
 
-        # --- Top-N por margen (desc), desempate por score ---
-        topn = cheapest_per_cluster.sort_values(["margin_abs","score"], ascending=[False, False]).head(int(top_n))
+        if mode_norm == "cheapest":
+            # precio asc, desempate por margen y score
+            sort_cols = ["precio_final_eur", "margin_abs", "score"]
+            ascending = [True, False, False]
+        else:  # max_margin
+            # margen desc, desempate por score y precio
+            sort_cols = ["margin_abs", "score", "precio_final_eur"]
+            ascending = [False, False, True]
 
-        # --- salida en layout estándar ---
-        return self._format_output(topn).reset_index(drop=True)
+        df_sorted = df.sort_values(sort_cols, ascending=ascending)
+
+        # --- límite de repetición por cluster (máx 10% de N) ---
+        N = int(top_n)
+        if N <= 0:
+            return self._format_output(df_sorted.head(0))
+
+        max_per_cluster = int(N * 0.10)  # 10% de N
+        if max_per_cluster < 1:
+            max_per_cluster = 1
+
+        # Definimos el "cluster" como marca+modelo+anio+combustible
+        brand_col = None
+        for c in ["make_clean", "marca"]:
+            if c in df_sorted.columns:
+                brand_col = c
+                break
+        model_col = None
+        for c in ["modelo_base_x", "modelo_base", "modelo"]:
+            if c in df_sorted.columns:
+                model_col = c
+                break
+        year_col = "anio" if "anio" in df_sorted.columns else (
+            "year" if "year" in df_sorted.columns else None
+        )
+        fuel_col = "combustible_norm" if "combustible_norm" in df_sorted.columns else None
+
+        def cluster_key(row):
+            key_parts = []
+            for col in [brand_col, model_col, year_col, fuel_col]:
+                if col is not None:
+                    key_parts.append(str(row.get(col, "")))
+            return tuple(key_parts)
+
+        selected_idx: List[Any] = []
+        counts: Dict[tuple, int] = {}
+
+        for idx, row in df_sorted.iterrows():
+            key = cluster_key(row)
+            current = counts.get(key, 0)
+            if current >= max_per_cluster:
+                # ya hemos sacado el 10% de N de este cluster
+                continue
+            selected_idx.append(idx)
+            counts[key] = current + 1
+            if len(selected_idx) >= N:
+                break
+
+        df_out = df_sorted.loc[selected_idx]
+        return self._format_output(df_out).reset_index(drop=True)
 
     def q4_attractiveness_for_vehicle(self,
                                       modelo_base: str,
