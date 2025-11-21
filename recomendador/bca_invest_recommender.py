@@ -16,9 +16,7 @@ OUTPUT_COLS = [
     "segmento",
     "year_bca",
     "mileage",
-    "fuel_type",
-    "transmission",
-    "sale_country",
+    "combustible_norm",
     "sale_name",
     "winning_bid",
     "precio_final_eur",
@@ -200,7 +198,7 @@ class BCAInvestRecommender:
         """Conforma el dataframe al layout OUTPUT_COLS (crea/renombra/concatena si hace falta)."""
         out = df.copy()
 
-        # Derivados / mapeos
+        # auction_name a partir de sale_name si hace falta (por si lo usas en algún sitio)
         if "auction_name" not in out.columns and "sale_name" in out.columns:
             out["auction_name"] = out["sale_name"]
 
@@ -211,26 +209,25 @@ class BCAInvestRecommender:
                     out["year"] = out[c]
                     break
 
-        # mileage: prefer 'mileage' > 'km'/'kilometros'/'odometro'
+        # mileage
         if "mileage" not in out.columns:
             for c in ["km","kilometros","kilómetros","odometro","odómetro"]:
                 if c in out.columns:
                     out["mileage"] = out[c]
                     break
 
-        # DESPUÉS: fuel_type SIEMPRE = combustible_norm cuando exista
-       if "combustible_norm" in out.columns:
-           out["fuel_type"] = out["combustible_norm"]
+        # fuel normalizado en combustible_norm si falta
+        if "combustible_norm" not in out.columns and "fuel_type" in out.columns:
+            out["combustible_norm"] = out["fuel_type"]
 
-
-        # modelo_base: coalesce varios candidatos
+        # modelo_base_x
         if "modelo_base_x" not in out.columns:
             for c in ["modelo_base","modelo_base_y","modelo_base_match","modelo"]:
                 if c in out.columns:
-                    out["modelo_base_x"] = out[c]; break
+                    out["modelo_base_x"] = out[c]
+                    break
 
-        # transmission-sale_country combinado
-        out["transmission-sale_country"] = out.apply(self._compose_transmission_country, axis=1)
+        # OJO: ya NO creamos transmission-sale_country aquí
 
         # Crear faltantes vacíos
         for c in OUTPUT_COLS:
