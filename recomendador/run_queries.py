@@ -273,6 +273,35 @@ def main():
             results_info.append((qname, f))
             continue
 
+        if qtype in {"attractiveness", "q4"}:
+            model_base = (
+                q.get("modelo_base")
+                or q.get("model_base")
+                or q.get("modelo")
+                or ""
+            )
+            year = q.get("year") or q.get("anio") or q.get("año")
+            fuel = q.get("fuel") or q.get("combustible") or q.get("fuel_include")
+
+            filters_q = q.get("filters", {}) or {}
+            year_from = filters_q.get("min_year", filters_q.get("year_from", 2020))
+            year_to   = filters_q.get("max_year", filters_q.get("year_to", 2024))
+
+            res = rec.q4_attractiveness_for_vehicle(
+                modelo_base=model_base,
+                region=region,
+                year=int(year) if year else None,
+                fuel=fuel,
+                year_from=year_from,
+                year_to=year_to,
+            )
+
+            f = outdir / f"{safe}.csv"
+            res.to_csv(f, index=False)
+            results_info.append((qname, f))
+            continue
+
+
         if qtype in {"best_fuel_gap","q5"}:
             model_base = q.get("modelo_base") or q.get("model_base") or q.get("modelo") or ""
             year = int(q.get("year") or q.get("anio") or q.get("año") or 0)
