@@ -3,7 +3,7 @@ alpha: 0.6  # peso del margen en el score (0..1). La rotación pesa (1 - alpha).
 
 # Filtros globales (se aplican a TODAS las consultas)
 global_filters:
-  margin_cap_ratio: 0.5
+  margin_cap_ratio: 0.3
   sold_only: true
   max_year_gap: 3
   fuel_exclude: []
@@ -73,12 +73,18 @@ queries:
     year: 2021          # también acepta anio / año
 
   # ---------------- Consulta genérica (legacy compatible) ----------------
-  - name: "GEN - Top 15 baratos BCN (<=15k, <=6 años, automáticos)"
+  - name: "GEN - X1 <= 6 años, <=15k, <=120k km, DIESEL, BCN"
     type: generic
     region: bcn
-    top_n: 15
+    top_n: 20
+    selection: max_margin   # o cheapest / mean
     filters:
+      modelo_base: "X1"
       max_age_years: 6
       max_price: 15000
-      # gearbox: automatic  # <— hoy no se parsea; si quieres lo soportamos en el runner
-    selection: cheapest
+      max_km: 120000
+      fuel_include: ["DIESEL"]
+      segment_include: ["SUV compacto"]
+      gearbox: automatic
+      min_year: 2019
+      max_year: 2024
