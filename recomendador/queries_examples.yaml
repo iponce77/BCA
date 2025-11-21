@@ -66,6 +66,11 @@ queries:
       max_year: 2024       # por defecto 2024
       # fuel_include: ["DIESEL","GASOLINA"]  # opcional; normalmente basta con 'fuel' arriba
 
+  # ---------------- Q5 ----------------
+  - name: "Q5 - Mejor fuel vs resto para BMW X1 2021"
+    type: q5
+    modelo_base: "X1"   # se usará contra la columna modelo_base_x
+    year: 2021          # también acepta anio / año
 
   # ---------------- Consulta genérica (legacy compatible) ----------------
   - name: "GEN - Top 15 baratos BCN (<=15k, <=6 años, automáticos)"
