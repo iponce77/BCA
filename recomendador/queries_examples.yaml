@@ -51,6 +51,19 @@ queries:
       max_year: 2025
       max_km: 100000
       # fuel: ["GASOLINA","DIESEL"]   # opcional
+      
+  # ---------------- Q4 ----------------
+  - name: "Q4 - Atractivo Golf 2.0 TDI 2020 DIESEL (BCN)"
+    type: q4
+    region: bcn            # por defecto bcn, pero puedes poner cat o esp
+    modelo_base: "GOLF"
+    year: 2020             # opcional; si lo quitas usará el rango de filters
+    fuel: "DIESEL"         # opcional; si lo quitas usa todos los fuels
+    filters:
+      min_year: 2020       # por defecto 2020
+      max_year: 2024       # por defecto 2024
+      # fuel_include: ["DIESEL","GASOLINA"]  # opcional; normalmente basta con 'fuel' arriba
+
 
   # ---------------- Consulta genérica (legacy compatible) ----------------
   - name: "GEN - Top 15 baratos BCN (<=15k, <=6 años, automáticos)"
