@@ -43,7 +43,7 @@ queries:
   # ---------------- Q3 ----------------
   - name: "Q3 - Orden de precio en segmento SUV compacto"
     type: q3
-    segment: "SUV compacto"
+    segment: "JC"
     region: esp
     top_n: 20
     mode: cheapest   # mode: max_margin (alternativa)    # orden por precio_final_eur asc (por defecto)
@@ -69,8 +69,8 @@ queries:
   # ---------------- Q5 ----------------
   - name: "Q5 - Mejor fuel vs resto para modelo"
     type: q5
-    modelo_base: "X1"   # se usará contra la columna modelo_base_x
-    year: 2021          # también acepta anio / año
+    modelo_base: "GOLF"   # se usará contra la columna modelo_base_x
+    year: 2022          # también acepta anio / año
 
   # ---------------- Consulta genérica (legacy compatible) ----------------
   - name: "GEN - X1 <= 6 años, <=15k, <=120k km, DIESEL, BCN"
@@ -81,10 +81,10 @@ queries:
     filters:
       modelo_base: "X1"
       max_age_years: 6
-      max_price: 15000
+      max_price: 25000
       max_km: 120000
-      fuel_include: ["DIESEL"]
-      segment_include: ["SUV compacto"]
+      fuel_include: [""]
+      segment_include: [""]
       gearbox: automatic
       min_year: 2019
       max_year: 2024
